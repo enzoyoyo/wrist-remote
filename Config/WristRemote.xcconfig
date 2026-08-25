@@ -1,0 +1,7 @@
+// Safe, non-signing defaults. Local.xcconfig is intentionally ignored.
+WRISTREMOTE_BUNDLE_PREFIX = com.example.wristremote
+WRISTREMOTE_DEVELOPMENT_TEAM =
+WRISTREMOTE_RELAY_BASE_URL = https:/$()/relay.example.invalid
+WRISTREMOTE_CODEX_EXECUTABLE_PATH =
+
+#include? "Local.xcconfig"

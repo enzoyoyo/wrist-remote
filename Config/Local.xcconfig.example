@@ -1,0 +1,11 @@
+// Copy to Local.xcconfig and replace the placeholders for device builds.
+// Never commit Local.xcconfig.
+WRISTREMOTE_BUNDLE_PREFIX = org.example.wristremote
+WRISTREMOTE_DEVELOPMENT_TEAM = REPLACE_WITH_YOUR_TEAM_ID
+
+// Keep the .invalid value for LAN-only use. For Internet relay support,
+// replace it with the HTTPS URL printed by scripts/deploy-relay.sh.
+WRISTREMOTE_RELAY_BASE_URL = https:/$()/relay.example.invalid
+
+// Optional. Leave blank to use safe automatic discovery.
+WRISTREMOTE_CODEX_EXECUTABLE_PATH =

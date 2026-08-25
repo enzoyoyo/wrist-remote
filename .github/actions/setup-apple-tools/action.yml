@@ -1,0 +1,55 @@
+name: Set up pinned Apple build tools
+description: Installs checksum-verified XcodeGen and ripgrep releases without Homebrew.
+
+runs:
+  using: composite
+  steps:
+    - name: Install XcodeGen 2.46.0
+      shell: bash
+      run: |
+        set -euo pipefail
+        readonly version=2.46.0
+        readonly expected_sha256=4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+        readonly archive="$RUNNER_TEMP/xcodegen.zip"
+        readonly install_root="$RUNNER_TEMP/xcodegen-release"
+        curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+          --output "$archive" \
+          "https://github.com/yonaskolb/XcodeGen/releases/download/${version}/xcodegen.zip"
+        printf '%s  %s\n' "$expected_sha256" "$archive" | shasum -a 256 --check
+        mkdir -p "$install_root"
+        unzip -q "$archive" -d "$install_root"
+        chmod 0755 "$install_root/xcodegen/bin/xcodegen"
+        "$install_root/xcodegen/bin/xcodegen" --version
+        echo "$install_root/xcodegen/bin" >> "$GITHUB_PATH"
+
+    - name: Install ripgrep 15.2.0
+      shell: bash
+      run: |
+        set -euo pipefail
+        readonly version=15.2.0
+        case "$(uname -m)" in
+          arm64)
+            readonly target=aarch64-apple-darwin
+            readonly expected_sha256=3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4
+            ;;
+          x86_64)
+            readonly target=x86_64-apple-darwin
+            readonly expected_sha256=af7825fcc69a2afc7a7aea55fc9af90e26421d8f20fe59df32e233c0b8a231c1
+            ;;
+          *)
+            echo "Unsupported macOS runner architecture." >&2
+            exit 1
+            ;;
+        esac
+        readonly archive="$RUNNER_TEMP/ripgrep.tar.gz"
+        readonly install_root="$RUNNER_TEMP/ripgrep-release"
+        curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+          --output "$archive" \
+          "https://github.com/BurntSushi/ripgrep/releases/download/${version}/ripgrep-${version}-${target}.tar.gz"
+        printf '%s  %s\n' "$expected_sha256" "$archive" | shasum -a 256 --check
+        mkdir -p "$install_root"
+        tar -xzf "$archive" -C "$install_root"
+        readonly bin_dir="$install_root/ripgrep-${version}-${target}"
+        chmod 0755 "$bin_dir/rg"
+        "$bin_dir/rg" --version
+        echo "$bin_dir" >> "$GITHUB_PATH"

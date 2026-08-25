@@ -1,0 +1,92 @@
+name: WristRemoteBridge
+
+options:
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "13.0"
+
+configFiles:
+  Debug: ../../Config/WristRemote.xcconfig
+  Release: ../../Config/WristRemote.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CURRENT_PROJECT_VERSION: 7
+    MARKETING_VERSION: 0.3.0
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: $(WRISTREMOTE_DEVELOPMENT_TEAM)
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+
+targets:
+  WristRemoteBridge:
+    type: application
+    platform: macOS
+    deploymentTarget: "13.0"
+    sources:
+      - path: Sources
+      # The iPhone, Watch, and bridge share only this Foundation wire schema.
+      - path: ../WristRemote/Shared/WatchActionProfileWire.swift
+        group: Shared Watch Wire Protocol
+      - path: ../WristRemote/Shared/WristBridgeWireMessage.swift
+        group: Shared Watch Wire Protocol
+      - path: ../WristRemote/Shared/WatchRemoteProtocol.swift
+        group: Shared Watch Wire Protocol
+      - path: ../WristRemote/Shared/WristInternetRelayProtocol.swift
+        group: Shared Watch Wire Protocol
+    dependencies:
+      - sdk: AVFoundation.framework
+      - sdk: CryptoKit.framework
+      - sdk: Network.framework
+      - sdk: Security.framework
+      - sdk: ServiceManagement.framework
+      - sdk: Speech.framework
+    info:
+      path: Generated/WristRemoteBridge-Info.plist
+      properties:
+        CFBundleDisplayName: 腕上遥控桥
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.utilities
+        LSMinimumSystemVersion: "13.0"
+        NSBonjourServices:
+          - _wristremote._tcp
+        NSLocalNetworkUsageDescription: 用于连接同一局域网内的 Wrist Remote iPhone 与 Apple Watch。
+        NSSpeechRecognitionUsageDescription: 用于把 Apple Watch 传来的语音转成文字并输入当前文本框。
+        WristRemoteRelayBaseURL: $(WRISTREMOTE_RELAY_BASE_URL)
+        WristRemoteCodexExecutablePath: $(WRISTREMOTE_CODEX_EXECUTABLE_PATH)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(WRISTREMOTE_BUNDLE_PREFIX).bridge
+        PRODUCT_NAME: WristRemoteBridge
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Generated/WristRemoteBridge-Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_APP_SANDBOX: NO
+        SKIP_INSTALL: NO
+
+  WristRemoteBridgeTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "13.0"
+    sources:
+      - path: Tests
+    dependencies:
+      - target: WristRemoteBridge
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(WRISTREMOTE_BUNDLE_PREFIX).bridge.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  WristRemoteBridge:
+    build:
+      targets:
+        WristRemoteBridge: all
+    run:
+      config: Debug
+    test:
+      targets:
+        - WristRemoteBridgeTests
+    archive:
+      config: Release

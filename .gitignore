@@ -1,0 +1,87 @@
+# macOS and editors
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Xcode and Swift
+DerivedData/
+**/DerivedData/
+.swiftpm/
+**/.swiftpm/
+*.xcuserstate
+xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+apps/WristRemote/WristRemote.xcodeproj/
+apps/WristRemoteBridge/WristRemoteBridge.xcodeproj/
+**/.build/
+**/build/
+*.xcresult/
+*.xcarchive/
+*.dSYM/
+*.dSYM.zip
+*.ipa
+*.app/
+*.dmg
+*.pkg
+dist/
+artifacts/
+coverage/
+*.profraw
+*.profdata
+
+# Generated project files
+apps/WristRemote/Generated/
+apps/WristRemoteBridge/Generated/
+apps/WristRemoteRelay/worker-configuration.d.ts
+
+# JavaScript and Cloudflare
+**/node_modules/
+**/.wrangler/
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.env
+.env.*
+!.env.example
+.envrc
+.direnv/
+.npmrc
+
+# Local product configuration
+Config/Local.xcconfig
+
+# Signing material and credentials
+*.cer
+*.crt
+*.der
+*.key
+*.p8
+*.p12
+*.pem
+*.mobileprovision
+*.provisionprofile
+*.keychain
+*.keychain-db
+*.keystore
+*.jks
+
+# Logs, diagnostics, local scans, and private working material
+*.log
+*.trace
+*.ips
+*.sarif
+.codex/
+.codex-*/
+.security-scan/
+scan-manifest.json
+findings.json
+coverage.json
+report.md
+Screenshots/
+screenshots/
+Testing/evidence/
+Bugs/

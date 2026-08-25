@@ -1,0 +1,17 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+  - package-ecosystem: npm
+    directory: /apps/WristRemoteRelay
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+  - package-ecosystem: swift
+    directory: /apps/WristRemote
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3

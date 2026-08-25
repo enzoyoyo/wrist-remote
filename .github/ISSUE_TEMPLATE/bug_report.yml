@@ -1,0 +1,41 @@
+name: Bug report
+description: Report a reproducible Wrist Remote problem without uploading sensitive diagnostics.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include tokens, room IDs, device identifiers, account details, local paths, logs containing private text, or provisioning profiles.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Apple Watch app
+        - iPhone companion
+        - Mac bridge
+        - Internet relay
+        - Documentation or scripts
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Use placeholders for private values.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I removed credentials, personal data, device IDs, local paths, and private logs.
+          required: true
