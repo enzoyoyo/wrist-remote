@@ -36,7 +36,7 @@ The LAN listener binds to one concrete, non-publicly-routable address on an appr
 ## Ten-minute quick start
 
 ```bash
-git clone YOUR_PRIVATE_REPOSITORY_URL wrist-remote
+git clone https://github.com/OWNER/wrist-remote.git
 cd wrist-remote
 make setup
 make doctor

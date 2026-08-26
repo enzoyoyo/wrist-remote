@@ -38,7 +38,7 @@ Apple Watch
 ## 10 分钟快速开始
 
 ```bash
-git clone YOUR_PRIVATE_REPOSITORY_URL wrist-remote
+git clone https://github.com/OWNER/wrist-remote.git
 cd wrist-remote
 make setup
 make doctor

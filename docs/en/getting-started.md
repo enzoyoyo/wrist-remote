@@ -22,7 +22,7 @@ Start with the LAN path and add the Internet relay only after local operation wo
 ## 1. Prepare the project
 
 ```bash
-git clone YOUR_PRIVATE_REPOSITORY_URL wrist-remote
+git clone https://github.com/OWNER/wrist-remote.git
 cd wrist-remote
 make setup
 make doctor

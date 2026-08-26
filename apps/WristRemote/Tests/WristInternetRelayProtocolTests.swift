@@ -162,6 +162,18 @@ final class WristInternetRelayProtocolTests: XCTestCase {
         XCTAssertNil(placeholder.encodedBase64())
     }
 
+    func testOperationalRelayURLRejectsInvalidSentinelWithRepeatedTrailingDots() throws {
+        for trailingDotCount in 2...3 {
+            let rawValue = "https://relay.example.invalid"
+                + String(repeating: ".", count: trailingDotCount)
+            let baseURL = try XCTUnwrap(URL(string: rawValue))
+            XCTAssertFalse(
+                WristInternetRelayConfiguration.isOperationalBaseURL(baseURL),
+                rawValue
+            )
+        }
+    }
+
     func testInternetAudioBatchingAdaptsToBacklogAndFinalTail() {
         XCTAssertFalse(WristInternetAudioBatchingPolicy.shouldFlush(
             bufferedPacketCount: 4,

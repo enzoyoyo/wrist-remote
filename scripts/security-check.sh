@@ -1,26 +1,26 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 
-emulate -LR zsh
 set -euo pipefail
 
-readonly SCRIPT_DIR="${0:A:h}"
-readonly REPO_ROOT="${SCRIPT_DIR:h}"
-readonly TEMP_ROOT="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/WristRemoteSecurity.XXXXXX")"
-readonly WORKTREE_ROOT="$TEMP_ROOT/worktree"
+SCRIPT_DIR="$(CDPATH= cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(CDPATH= cd "$SCRIPT_DIR/.." && pwd -P)"
+TEMP_ROOT="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/WristRemoteSecurity.XXXXXX")"
+WORKTREE_ROOT="$TEMP_ROOT/worktree"
+readonly SCRIPT_DIR REPO_ROOT TEMP_ROOT WORKTREE_ROOT
 
 cleanup() {
   local allowed_prefix="${TMPDIR:-/tmp}/WristRemoteSecurity."
-  if [[ -d "$TEMP_ROOT" && "$TEMP_ROOT" == ${allowed_prefix}* ]]; then
+  if [[ -d "$TEMP_ROOT" && "$TEMP_ROOT" == "$allowed_prefix"* ]]; then
     /bin/rm -rf -- "$TEMP_ROOT"
   else
-    print -u2 -- "Security-check temporary directory failed its cleanup guard."
+    printf '%s\n' "Security-check temporary directory failed its cleanup guard." >&2
   fi
 }
 trap cleanup EXIT INT TERM
 
 for required_command in git gitleaks python3; do
   if ! command -v "$required_command" >/dev/null 2>&1; then
-    print -u2 -- "Required security scanner is missing: $required_command"
+    printf '%s\n' "Required security scanner is missing: $required_command" >&2
     exit 1
   fi
 done
@@ -31,18 +31,18 @@ git_mode=0
 if git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   git_mode=1
 elif [[ -e "$REPO_ROOT/.git" ]]; then
-  print -u2 -- "Git metadata exists but cannot be read; security checks failed closed."
+  printf '%s\n' "Git metadata exists but cannot be read; security checks failed closed." >&2
   exit 1
 elif [[ "${CI:-}" == true ]]; then
-  print -u2 -- "CI security checks require a Git checkout so history can be scanned."
+  printf '%s\n' "CI security checks require a Git checkout so history can be scanned." >&2
   exit 1
 else
-  print -- "No Git repository yet; scanning the publishable worktree and skipping history."
+  printf '%s\n' "No Git repository yet; scanning the publishable worktree and skipping history."
 fi
 
 if (( git_mode )) && [[ "${CI:-}" == true ]] \
   && ! git -C "$REPO_ROOT" rev-parse --verify HEAD >/dev/null 2>&1; then
-  print -u2 -- "CI security checks require a checked-out commit and complete history."
+  printf '%s\n' "CI security checks require a checked-out commit and complete history." >&2
   exit 1
 fi
 
@@ -610,7 +610,7 @@ print(f"Publishable worktree files checked: {len(paths)}")
 print(f"Custom Git history scan: {'complete' if history_scanned else 'not available'}")
 PY
 then
-  print -u2 -- "Repository privacy policy check failed."
+  printf '%s\n' "Repository privacy policy check failed." >&2
   exit 1
 fi
 
@@ -621,7 +621,7 @@ if ! gitleaks dir "$WORKTREE_ROOT" \
   --max-target-megabytes=5 \
   --report-format=json \
   --report-path="$TEMP_ROOT/gitleaks-worktree.json"; then
-  print -u2 -- "Gitleaks worktree scan failed closed."
+  printf '%s\n' "Gitleaks worktree scan failed closed." >&2
   exit 1
 fi
 
@@ -633,11 +633,11 @@ if (( git_mode )) && git -C "$REPO_ROOT" rev-parse --verify HEAD >/dev/null 2>&1
     --log-opts=--all \
     --report-format=json \
     --report-path="$TEMP_ROOT/gitleaks-history.json"; then
-    print -u2 -- "Gitleaks Git-history scan failed closed."
+    printf '%s\n' "Gitleaks Git-history scan failed closed." >&2
     exit 1
   fi
 else
-  print -- "Gitleaks Git-history scan: not available before the first commit."
+  printf '%s\n' "Gitleaks Git-history scan: not available before the first commit."
 fi
 
-print -- "Repository privacy, worktree, and available-history checks passed."
+printf '%s\n' "Repository privacy, worktree, and available-history checks passed."

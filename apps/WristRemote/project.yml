@@ -85,7 +85,7 @@ targets:
         WristRemoteRelayBaseURL: $(WRISTREMOTE_RELAY_BASE_URL)
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: $(WRISTREMOTE_BUNDLE_PREFIX).watchkitapp
+        PRODUCT_BUNDLE_IDENTIFIER: $(WRISTREMOTE_BUNDLE_PREFIX).ios.watchkitapp
         PRODUCT_NAME: WristRemoteWatchApp
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "4"

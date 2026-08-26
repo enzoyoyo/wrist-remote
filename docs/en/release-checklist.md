@@ -80,21 +80,28 @@ git status --short
 
 Automation, builds, health checks, and agent actions do not replace these device outcomes. Mark every unexecuted item as unaccepted.
 
-## 7. Private GitHub repository settings
+## 7. Private GitHub staging
 
 - [ ] Repository visibility is private.
-- [ ] Default branch is `main`, with branch protection and required CI.
-- [ ] Secret scanning, push protection, Dependabot, and private vulnerability reporting are enabled. If the plan lacks a feature, retain local and CI gitleaks gates.
+- [ ] Default branch is `main`; the exact candidate commit has passed `Privacy, secrets, and history`, `Relay checks`, and `Apple builds and tests` in private CI.
 - [ ] Actions default to `contents: read` and never inject production secrets into pull requests.
 - [ ] Initial delivery is source-only: no signed app, IPA, provisioning profile, certificate, or private release asset.
 - [ ] GitHub Pages, public Wiki, and automatic public visibility are disabled.
+- [ ] A fresh clone from the private remote passes the repository security gate and all locally supported tests and unsigned builds.
 
-## 8. Final gate before public visibility
+CodeQL jobs intentionally skip while the repository is private unless the account has the required GitHub Code Security entitlement. Do not claim CodeQL coverage and do not make CodeQL a required check at this stage. Keep local and CI gitleaks gates active.
+
+## 8. Public transition and post-public security
 
 - [ ] Repeat setup, test, build, and security from a clean clone.
 - [ ] Scan complete remote history, not only the latest local working tree.
 - [ ] Re-download any candidate source archive, scan it, unpack it, and review every file.
 - [ ] Repository owner reviewed the final tree, documentation, license, threat model, and unresolved issues.
 - [ ] Repository owner explicitly approved public visibility at this release point.
+- [ ] Change visibility to public as a separate repository-owner action, then verify unauthenticated access and the `main` default branch.
+- [ ] Manually dispatch CodeQL for the public commit and require both `JavaScript and TypeScript` and `Swift` to succeed.
+- [ ] Enable secret scanning, push protection, Dependabot security updates, and private vulnerability reporting where GitHub exposes them for the public repository.
+- [ ] Only after the successful CI and CodeQL check runs exist, configure `main` branch protection using their actual check-run names and read the protection back from GitHub.
+- [ ] Confirm that no Release, deployment, Pages site, signed binary, provisioning profile, certificate, or private acceptance artifact was published.
 
-Visibility change must remain a separate manual action. Build, test, and release scripts must never convert a private repository to public automatically.
+Visibility change must remain a separate repository-owner action. Build, test, and release scripts must never convert a private repository to public automatically. Branch protection must not require a check that has never completed successfully for the public commit.

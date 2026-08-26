@@ -26,7 +26,10 @@ enum WristInternetRelayConfiguration {
         guard baseURL.scheme?.lowercased() == "https",
               let rawHost = baseURL.host?.lowercased()
         else { return false }
-        let host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
+        var host = rawHost
+        while host.hasSuffix(".") {
+            host.removeLast()
+        }
         return !host.isEmpty && host != "invalid" && !host.hasSuffix(".invalid")
     }
     static let maximumClockSkewMilliseconds: Int64 = 30_000

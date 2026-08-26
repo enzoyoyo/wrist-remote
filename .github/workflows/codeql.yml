@@ -24,7 +24,7 @@ env:
 jobs:
   javascript-typescript:
     name: JavaScript and TypeScript
-    if: ${{ vars.ENABLE_CODEQL == 'true' }}
+    if: ${{ github.repository_visibility == 'public' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -45,7 +45,7 @@ jobs:
 
   swift:
     name: Swift
-    if: ${{ vars.ENABLE_CODEQL == 'true' }}
+    if: ${{ github.repository_visibility == 'public' }}
     runs-on: macos-15
     timeout-minutes: 50
     steps:

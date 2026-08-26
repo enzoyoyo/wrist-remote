@@ -43,6 +43,21 @@ verify_plan="$(make -C "$REPO_ROOT" -n verify 2>&1 || true)"
 check "make verify includes simulator tests" contains "$verify_plan" "scripts/test-simulators.sh"
 check "make verify includes the high-severity relay audit" contains "$verify_plan" "npm audit --audit-level=high"
 
+codeql_workflow="$(<"$REPO_ROOT/.github/workflows/codeql.yml")"
+codeql_public_gates="$(python3 -c 'import pathlib, re, sys; text = pathlib.Path(sys.argv[1]).read_text(); print(len(re.findall(r"^\s+if:\s*\$\{\{\s*github\.repository_visibility\s*==\s*[\"\x27]public[\"\x27]\s*\}\}\s*$", text, re.MULTILINE)))' "$REPO_ROOT/.github/workflows/codeql.yml")"
+check "both CodeQL jobs require public repository visibility" test "$codeql_public_gates" = "2"
+check "CodeQL does not depend on a manual enable variable" not_contains "$codeql_workflow" "ENABLE_CODEQL"
+
+security_shebang="$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).read_text().splitlines()[0])' "$SCRIPT_DIR/security-check.sh")"
+check "security scanner uses Bash available on the Ubuntu CI image" test "$security_shebang" = "#!/usr/bin/env bash"
+check "security scanner parses with Bash" /bin/bash -n "$SCRIPT_DIR/security-check.sh"
+
+bundle_contract="$(python3 -c 'import pathlib, re, sys; ids = re.findall(r"PRODUCT_BUNDLE_IDENTIFIER:\s*(\S+)", pathlib.Path(sys.argv[1]).read_text()); print("pass" if len(ids) >= 2 and ids[1].startswith(ids[0] + ".") else "fail")' "$REPO_ROOT/apps/WristRemote/project.yml")"
+check "watch app bundle ID is namespaced under its iOS companion" test "$bundle_contract" = "pass"
+
+installer_bundle_contract="$(python3 -c 'import pathlib, re, sys; ids = re.findall(r"PRODUCT_BUNDLE_IDENTIFIER:\s*(\S+)", pathlib.Path(sys.argv[1]).read_text()); source = pathlib.Path(sys.argv[2]).read_text(); assignments = dict(re.findall(r"^(IOS|WATCH)_BUNDLE_ID=\"([^\"]+)\"$", source, re.MULTILINE)); normalized = [value.replace("$(WRISTREMOTE_BUNDLE_PREFIX)", "${BUNDLE_PREFIX}") for value in ids[:2]]; print("pass" if len(normalized) == 2 and assignments.get("IOS") == normalized[0] and assignments.get("WATCH") == normalized[1] else "fail")' "$REPO_ROOT/apps/WristRemote/project.yml" "$SCRIPT_DIR/install-devices.command")"
+check "real-device installer bundle IDs match generated app bundle IDs" test "$installer_bundle_contract" = "pass"
+
 readonly SIM_FIXTURE="$TEMP_ROOT/simulator"
 /bin/mkdir -p "$SIM_FIXTURE/bin" "$SIM_FIXTURE/tmp"
 cat > "$SIM_FIXTURE/devices.json" <<'JSON'

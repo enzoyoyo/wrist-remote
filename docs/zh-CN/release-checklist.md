@@ -80,21 +80,28 @@ git status --short
 
 自动化、构建、健康检查和代理操作不能代替这些真机结果。未执行的项目必须标记未验收。
 
-## 7. GitHub private 仓库设置
+## 7. GitHub private 暂存阶段
 
 - [ ] 仓库 visibility 为 private。
-- [ ] 默认分支为 `main`，启用 branch protection 和必需 CI。
-- [ ] Secret scanning、push protection、Dependabot 和私有漏洞报告已启用；若套餐不支持，保留本地/CI gitleaks 门禁。
+- [ ] 默认分支为 `main`；当前候选 commit 已在 private CI 中通过 `Privacy, secrets, and history`、`Relay checks` 和 `Apple builds and tests`。
 - [ ] Actions 默认 `contents: read`，不向 pull request 注入 production secrets。
 - [ ] 初始发布只含源码，不含签名 App、IPA、描述文件、证书或私有 Release 资产。
 - [ ] 未配置 GitHub Pages、公开 Wiki 或自动 public visibility。
+- [ ] 从 private 远端 fresh clone 后，仓库安全门禁、本机可执行的测试和无签名构建全部通过。
 
-## 8. 公开前最终门禁
+仓库处于 private 时，如果账号没有对应的 GitHub Code Security 权益，CodeQL job 会按设计跳过。此时不得声称 CodeQL 已覆盖，也不得把 CodeQL 设为 required check；本地与 CI gitleaks 门禁必须继续保留。
+
+## 8. 公开切换与公开后安全设置
 
 - [ ] 从干净 clone 重新执行 setup、test、build 和 security。
 - [ ] 扫描远端完整历史，而不只扫描本地最新工作树。
 - [ ] 重新下载任何候选源码归档并扫描、解包、逐文件核对。
 - [ ] 仓库所有者已查看最终文件树、文档、许可证、威胁模型和未解决问题。
 - [ ] 仓库所有者在当前发布时点明确批准改为 public。
+- [ ] 由仓库所有者单独把 visibility 改为 public，并验证未登录访问与 `main` 默认分支。
+- [ ] 对公开 commit 手动触发 CodeQL，要求 `JavaScript and TypeScript` 与 `Swift` 两项均成功。
+- [ ] 启用公开仓库可用的 secret scanning、push protection、Dependabot security updates 和私有漏洞报告。
+- [ ] 只有成功的 CI 与 CodeQL check run 已真实存在后，才按其实际名称设置 `main` branch protection，并从 GitHub 回读配置。
+- [ ] 确认没有发布 Release、deployment、Pages 站点、签名二进制、描述文件、证书或私有验收资料。
 
-可见性切换必须是独立的人工操作；构建、测试和发布脚本不得自动把 private 仓库改为 public。
+可见性切换必须是仓库所有者的独立操作；构建、测试和发布脚本不得自动把 private 仓库改为 public。branch protection 不得要求一个从未在公开 commit 上成功完成的检查。

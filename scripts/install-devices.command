@@ -616,7 +616,7 @@ BUNDLE_PREFIX="${WRISTREMOTE_BUNDLE_PREFIX:-$(
 [[ "$BUNDLE_PREFIX" != *'.example.'* && "$BUNDLE_PREFIX" != example.* ]] \
   || die '真机安装前请在 Config/Local.xcconfig 设置你自己的唯一 Bundle 前缀。'
 IOS_BUNDLE_ID="${BUNDLE_PREFIX}.ios"
-WATCH_BUNDLE_ID="${BUNDLE_PREFIX}.watchkitapp"
+WATCH_BUNDLE_ID="${BUNDLE_PREFIX}.ios.watchkitapp"
 readonly BUNDLE_PREFIX IOS_BUNDLE_ID WATCH_BUNDLE_ID
 
 cd "$APP_DIR"

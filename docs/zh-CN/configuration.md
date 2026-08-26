@@ -16,7 +16,7 @@
 
 | 变量 | 必需 | 说明 |
 |---|---:|---|
-| `WRISTREMOTE_BUNDLE_PREFIX` | 真机需要 | 自己控制的唯一反向域名；生成 `.ios`、`.watchkitapp`、`.bridge` 和测试 Bundle ID |
+| `WRISTREMOTE_BUNDLE_PREFIX` | 真机需要 | 自己控制的唯一反向域名；生成 `.ios`、`.ios.watchkitapp`、`.bridge` 和测试 Bundle ID |
 | `WRISTREMOTE_DEVELOPMENT_TEAM` | 真机需要 | 开发者自己的 10 位 Team ID；仅用于本地签名 |
 | `WRISTREMOTE_RELAY_BASE_URL` | 外网需要 | HTTPS Relay 根 URL；`.invalid` 值会安全禁用外网 |
 | `WRISTREMOTE_CODEX_EXECUTABLE_PATH` | 否 | 自定义 Codex 可执行文件路径；留空时 Bridge 安全自动发现 |

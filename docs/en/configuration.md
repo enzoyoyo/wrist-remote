@@ -16,7 +16,7 @@ Do not place runtime secrets in xcconfig files, `.env`, Wrangler configuration, 
 
 | Variable | Required | Meaning |
 |---|---:|---|
-| `WRISTREMOTE_BUNDLE_PREFIX` | For devices | A unique reverse-domain identifier you control; derives `.ios`, `.watchkitapp`, `.bridge`, and test Bundle IDs |
+| `WRISTREMOTE_BUNDLE_PREFIX` | For devices | A unique reverse-domain identifier you control; derives `.ios`, `.ios.watchkitapp`, `.bridge`, and test Bundle IDs |
 | `WRISTREMOTE_DEVELOPMENT_TEAM` | For devices | Your ten-character Apple Team ID, used only for local signing |
 | `WRISTREMOTE_RELAY_BASE_URL` | For Internet mode | HTTPS relay root; the `.invalid` value safely disables Internet mode |
 | `WRISTREMOTE_CODEX_EXECUTABLE_PATH` | No | Custom Codex executable path; blank enables safe bridge discovery |
