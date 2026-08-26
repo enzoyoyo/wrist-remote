@@ -1,6 +1,42 @@
 import Foundation
 
+protocol TrustedIdentityFingerprintStoring {
+    func load() -> Set<String>
+
+    @discardableResult
+    func save(_ fingerprints: Set<String>) -> Bool
+}
+
+struct KeychainTrustedIdentityFingerprintStore: TrustedIdentityFingerprintStoring {
+    private static let account = "trusted-identity-fingerprints-v1"
+    private let service: String
+
+    init(bundleIdentifier: String? = Bundle.main.bundleIdentifier) {
+        service = "\(bundleIdentifier ?? "dev.wristremote.bridge").trusted-identities"
+    }
+
+    func load() -> Set<String> {
+        Set(
+            WristInternetRelayKeychain.load(
+                [String].self,
+                account: Self.account,
+                service: service
+            ) ?? []
+        )
+    }
+
+    @discardableResult
+    func save(_ fingerprints: Set<String>) -> Bool {
+        WristInternetRelayKeychain.save(
+            fingerprints.sorted(),
+            account: Self.account,
+            service: service
+        )
+    }
+}
+
 final class BridgePreferences {
+    /// Legacy UserDefaults key retained only for one-way Keychain migration.
     static let trustedIdentityFingerprintsKey = "trustedIdentityFingerprints"
     static let applicationProfilesKey = "applicationProfiles"
     static let codexPinnedThreadIDKey = "codexPinnedThreadID"
@@ -8,19 +44,26 @@ final class BridgePreferences {
     static let watchActionProfileKey = "watchActionProfile"
 
     private let defaults: UserDefaults
+    private let trustedIdentityStore: any TrustedIdentityFingerprintStoring
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults = .standard,
+        trustedIdentityStore: any TrustedIdentityFingerprintStoring =
+            KeychainTrustedIdentityFingerprintStore()
+    ) {
         self.defaults = defaults
+        self.trustedIdentityStore = trustedIdentityStore
+        migrateLegacyTrustedIdentityFingerprints()
     }
 
     var trustedIdentityFingerprints: Set<String> {
         get {
-            Set(defaults.stringArray(forKey: Self.trustedIdentityFingerprintsKey) ?? [])
+            trustedIdentityStore.load()
         }
         set {
-            defaults.set(newValue.sorted(), forKey: Self.trustedIdentityFingerprintsKey)
+            trustedIdentityStore.save(newValue)
         }
     }
 
@@ -92,6 +135,15 @@ final class BridgePreferences {
         var fingerprints = trustedIdentityFingerprints
         fingerprints.insert(fingerprint)
         trustedIdentityFingerprints = fingerprints
+    }
+
+    private func migrateLegacyTrustedIdentityFingerprints() {
+        guard let legacyFingerprints = defaults.stringArray(
+            forKey: Self.trustedIdentityFingerprintsKey
+        ) else { return }
+        let migrated = trustedIdentityStore.load().union(legacyFingerprints)
+        guard trustedIdentityStore.save(migrated) else { return }
+        defaults.removeObject(forKey: Self.trustedIdentityFingerprintsKey)
     }
 
     static func normalizedProfiles(

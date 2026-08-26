@@ -1,6 +1,23 @@
 import XCTest
 @testable import WristRemoteBridge
 
+private final class InMemoryTrustedIdentityFingerprintStore:
+    TrustedIdentityFingerprintStoring
+{
+    var fingerprints: Set<String> = []
+    var allowsSaving = true
+
+    func load() -> Set<String> {
+        fingerprints
+    }
+
+    func save(_ fingerprints: Set<String>) -> Bool {
+        guard allowsSaving else { return false }
+        self.fingerprints = fingerprints
+        return true
+    }
+}
+
 final class BridgePreferencesTests: XCTestCase {
     private var suiteName = ""
     private var defaults: UserDefaults!
@@ -19,7 +36,11 @@ final class BridgePreferencesTests: XCTestCase {
     }
 
     func testPersistsOnlyBridgeOwnedKeys() {
-        let store = BridgePreferences(defaults: defaults)
+        let trustedIdentityStore = InMemoryTrustedIdentityFingerprintStore()
+        let store = BridgePreferences(
+            defaults: defaults,
+            trustedIdentityStore: trustedIdentityStore
+        )
         let app = BridgeApplicationProfile(
             title: "  Example  ",
             bundleIdentifier: "com.example.App",
@@ -29,11 +50,11 @@ final class BridgePreferencesTests: XCTestCase {
         store.applicationProfiles = [app]
         store.codexPinnedThreadID = "11111111-1111-4111-8111-111111111111"
         XCTAssertEqual(store.trustedIdentityFingerprints, ["fingerprint"])
+        XCTAssertEqual(trustedIdentityStore.fingerprints, ["fingerprint"])
         XCTAssertEqual(store.applicationProfiles.first?.title, "Example")
         XCTAssertEqual(
             Set(defaults.persistentDomain(forName: suiteName)?.keys.map { $0 } ?? []),
             [
-                BridgePreferences.trustedIdentityFingerprintsKey,
                 BridgePreferences.applicationProfilesKey,
                 BridgePreferences.codexPinnedThreadIDKey,
             ]
@@ -42,6 +63,59 @@ final class BridgePreferencesTests: XCTestCase {
             store.codexPinnedThreadID,
             "11111111-1111-4111-8111-111111111111"
         )
+    }
+
+    func testTrustedIdentityFingerprintsAreNotPersistedInUserDefaults() {
+        let trustedIdentityStore = InMemoryTrustedIdentityFingerprintStore()
+        let store = BridgePreferences(
+            defaults: defaults,
+            trustedIdentityStore: trustedIdentityStore
+        )
+
+        store.trust("fingerprint")
+
+        XCTAssertNil(defaults.object(forKey: BridgePreferences.trustedIdentityFingerprintsKey))
+        XCTAssertEqual(trustedIdentityStore.fingerprints, ["fingerprint"])
+    }
+
+    func testMigratesLegacyTrustedFingerprintsIntoSecureStore() {
+        defaults.set(
+            ["legacy-b", "legacy-a"],
+            forKey: BridgePreferences.trustedIdentityFingerprintsKey
+        )
+        let trustedIdentityStore = InMemoryTrustedIdentityFingerprintStore()
+        trustedIdentityStore.fingerprints = ["existing"]
+
+        _ = BridgePreferences(
+            defaults: defaults,
+            trustedIdentityStore: trustedIdentityStore
+        )
+
+        XCTAssertEqual(
+            trustedIdentityStore.fingerprints,
+            ["existing", "legacy-a", "legacy-b"]
+        )
+        XCTAssertNil(defaults.object(forKey: BridgePreferences.trustedIdentityFingerprintsKey))
+    }
+
+    func testKeepsLegacyTrustedFingerprintsWhenSecureMigrationFails() {
+        defaults.set(
+            ["legacy"],
+            forKey: BridgePreferences.trustedIdentityFingerprintsKey
+        )
+        let trustedIdentityStore = InMemoryTrustedIdentityFingerprintStore()
+        trustedIdentityStore.allowsSaving = false
+
+        _ = BridgePreferences(
+            defaults: defaults,
+            trustedIdentityStore: trustedIdentityStore
+        )
+
+        XCTAssertEqual(
+            defaults.stringArray(forKey: BridgePreferences.trustedIdentityFingerprintsKey),
+            ["legacy"]
+        )
+        XCTAssertTrue(trustedIdentityStore.fingerprints.isEmpty)
     }
 
     func testNormalizesAndDeduplicatesApplicationProfiles() {
