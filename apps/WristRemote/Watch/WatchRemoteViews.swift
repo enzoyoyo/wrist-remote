@@ -505,6 +505,7 @@ private struct RemoteDeckView: View {
                 } label: {
                     Image(systemName: "rectangle.3.group")
                 }
+                .accessibilityIdentifier("remote-page-picker")
                 .accessibilityLabel("选择遥控页")
                 .accessibilityValue(selectedPage.title)
                 .accessibilityHint("选择方向、功能或收藏页面，不会触发遥控按键")

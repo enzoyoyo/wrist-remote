@@ -58,6 +58,11 @@ check "watch app bundle ID is namespaced under its iOS companion" test "$bundle_
 installer_bundle_contract="$(python3 -c 'import pathlib, re, sys; ids = re.findall(r"PRODUCT_BUNDLE_IDENTIFIER:\s*(\S+)", pathlib.Path(sys.argv[1]).read_text()); source = pathlib.Path(sys.argv[2]).read_text(); assignments = dict(re.findall(r"^(IOS|WATCH)_BUNDLE_ID=\"([^\"]+)\"$", source, re.MULTILINE)); normalized = [value.replace("$(WRISTREMOTE_BUNDLE_PREFIX)", "${BUNDLE_PREFIX}") for value in ids[:2]]; print("pass" if len(normalized) == 2 and assignments.get("IOS") == normalized[0] and assignments.get("WATCH") == normalized[1] else "fail")' "$REPO_ROOT/apps/WristRemote/project.yml" "$SCRIPT_DIR/install-devices.command")"
 check "real-device installer bundle IDs match generated app bundle IDs" test "$installer_bundle_contract" = "pass"
 
+watch_ui_source="$(<"$REPO_ROOT/apps/WristRemote/Watch/WatchRemoteViews.swift")"
+watch_ui_tests="$(<"$REPO_ROOT/apps/WristRemote/WatchUITests/WristRemoteWatchUITests.swift")"
+check "watch page picker has a stable accessibility identifier" contains "$watch_ui_source" '.accessibilityIdentifier("remote-page-picker")'
+check "watch UI tests select the first stable page-picker match" contains "$watch_ui_tests" 'app.buttons.matching(identifier: "remote-page-picker").firstMatch'
+
 readonly SIM_FIXTURE="$TEMP_ROOT/simulator"
 /bin/mkdir -p "$SIM_FIXTURE/bin" "$SIM_FIXTURE/tmp"
 cat > "$SIM_FIXTURE/devices.json" <<'JSON'

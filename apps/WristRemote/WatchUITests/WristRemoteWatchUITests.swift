@@ -123,7 +123,7 @@ final class WristRemoteWatchUITests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        let picker = app.buttons["选择遥控页"]
+        let picker = app.buttons.matching(identifier: "remote-page-picker").firstMatch
         XCTAssertTrue(
             picker.waitForExistence(timeout: 5),
             "缺少明确的遥控分页控件",
