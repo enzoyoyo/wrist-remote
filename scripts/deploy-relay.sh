@@ -25,7 +25,7 @@ bundle_prefix="$(
 }
 
 cd "$RELAY_DIR"
-[[ -d node_modules ]] || npm ci
+npm ci
 npm run check
 
 deployment_output="$(npx wrangler deploy 2>&1)" || {
@@ -34,11 +34,13 @@ deployment_output="$(npx wrangler deploy 2>&1)" || {
 }
 print -- "$deployment_output"
 
-relay_url="${WRISTREMOTE_RELAY_BASE_URL:-$(
+discovered_relay_url="$(
   print -r -- "$deployment_output" \
     | rg -o 'https://[A-Za-z0-9.-]+\.workers\.dev(?:/[A-Za-z0-9._~!$&()*+,;=:@%/-]*)?' \
-    | /usr/bin/head -n 1
-)}"
+    | /usr/bin/head -n 1 \
+    || true
+)"
+relay_url="${WRISTREMOTE_RELAY_BASE_URL:-$discovered_relay_url}"
 [[ "$relay_url" == https://* ]] || {
   print -u2 -- "Could not determine the HTTPS Worker URL. Re-run with WRISTREMOTE_RELAY_BASE_URL=https://your-worker.example."
   exit 1

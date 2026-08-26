@@ -49,11 +49,11 @@
 
 ```bash
 make doctor
-make test
-make build
-make security
+make verify
 git status --short
 ```
+
+`make verify` 包含 Relay 依赖高风险审计以及 iOS/watchOS Simulator 测试；缺少兼容 runtime 时必须失败，不能跳过。
 
 - [ ] Shared Swift tests 通过。
 - [ ] Bridge XCTest 通过。

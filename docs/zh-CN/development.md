@@ -25,22 +25,26 @@ Xcode 工程、Generated Info.plist、DerivedData、Swift `.build`、`node_modul
 make setup       # 工具、Local.xcconfig、XcodeGen 和 npm ci
 make doctor      # 只读环境检查
 make test        # Swift package、Bridge XCTest、Relay check
-make build       # 三个 Apple target 的无签名构建
+make relay-audit # 锁定 Relay 依赖的高风险漏洞审计
+make test-simulators # iOS XCTest 与无需实时 Bridge 的 watchOS UI 冒烟测试
+make build       # 所有 Apple target 的无签名构建
 make security    # 路径、凭据和 Git 历史扫描
+make verify      # 完整发布门禁，包括依赖审计和 Simulator 测试
 make clean       # 仅删除明确的生成目录
 ```
 
-`make setup` 可能在已安装 Homebrew 时安装 XcodeGen，属于开发机状态变更。`make doctor` 不安装或修改任何内容。
+`make setup` 可能在已安装 Homebrew 时安装 XcodeGen，属于开发机状态变更。`make doctor` 不安装或修改任何内容。Simulator runtime 兼容性由 `make test-simulators` 和完整的 `make verify` 门禁检查，不属于 `make doctor`。
 
 ## 测试层次
 
 - Shared Swift tests：profile 完整性、协议 shape、连接状态、Relay crypto 和手势解析。
 - Bridge XCTest：动作、配对来源限制、配置会话、语音代际、Codex Hook/回复和隔离边界。
 - Relay check：Wrangler typegen、两套 TypeScript typecheck 和 Workers runtime Vitest。
+- Simulator tests：iOS XCTest target，以及两项不依赖实时 Bridge 的 watchOS UI 冒烟测试。
 - Unsigned builds：iOS Simulator、watchOS Simulator 和 macOS Release 编译。
-- 真机手工测试：配对、权限、36 个映射槽、震动、中文语音、Codex 回执、LAN/WAN 切换和生命周期重连。
+- 连线/真机测试：其余 watchOS UI tests 需要实时 Bridge；真机继续覆盖配对、权限、36 个映射槽、震动、中文语音、Codex 回执、LAN/WAN 切换和生命周期重连。
 
-前四项不能替代真机手工测试。UI automation 在系统无法启用自动化时应报告环境阻塞，不能写成通过。
+自动化层不能替代连线与真机测试。系统缺少所需 Simulator runtime 或无法启用 UI automation 时，应报告环境阻塞，不能写成通过。
 
 ## 修改动作
 
@@ -88,7 +92,7 @@ LAN、Relay 和 profile 分别使用版本 7、3 和 1。协议变更需要：
 
 ## 依赖与生成文件
 
-- Relay 使用 `package-lock.json`，开发和 CI 使用 `npm ci`。
+- Relay 使用 `package-lock.json`；测试与部署每次都用 `npm ci` 重装，不信任已有 `node_modules`。
 - 不提交 `node_modules`、`.wrangler` 或自动生成的 Worker 类型。
 - Xcode 工程由 `project.yml` 生成，不手工维护 `project.pbxproj`。
 - 新依赖必须记录许可证、用途、精确版本及是否进入分发物。

@@ -24,7 +24,7 @@ Maintainers should acknowledge a complete report within seven days. A remediatio
 
 ## Security boundaries
 
-- The Mac bridge accepts LAN sessions only after explicit pairing and restricts local transport to LAN source addresses.
+- Before accepting TCP, the Mac bridge binds local transport to one concrete, non-publicly-routable address on an approved non-tunnel local interface (RFC1918 IPv4, IPv4 link-local, or IPv6 ULA) and fails closed when none exists. It then applies an independent LAN source-address gate before explicit pairing.
 - Internet commands are end-to-end encrypted. The relay receives ciphertext and transport metadata, not plaintext actions, audio, summaries, or replies.
 - Client copies of device/Mac credentials and the E2E key remain in Keychain. The Cloudflare Worker secret store holds the allowed room ID and bootstrap Mac bearer; Durable Object SQLite stores token hashes, a generated relay-device UUID, initialization time, and replay/rate-limit state.
 - The relay has no offline command queue. Expired or replayed envelopes are rejected.

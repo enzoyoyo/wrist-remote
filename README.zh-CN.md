@@ -24,14 +24,14 @@ Apple Watch
                                Mac 主动建立 WSS 出站连接
 ```
 
-Mac 不开放公网入站端口。未部署 Relay 时，默认 URL 使用保留的 `.invalid` 域名，外网功能不会意外连到作者或第三方服务。
+局域网 listener 只绑定允许的非隧道本地接口上的一个具体、不可公网路由地址（RFC1918 IPv4、IPv4 链路本地地址或 IPv6 ULA）；找不到安全地址时拒绝启动。Mac 不开放公网入站端口。未部署 Relay 时，共享 provisioning 校验会在接受 provisioning 或发起网络请求前拒绝保留的 `.invalid` URL。
 
 ## 系统要求
 
 - macOS 13 或更新版本。
 - iOS 17 或更新版本。
 - watchOS 10 或更新版本。
-- 完整版 Xcode、XcodeGen、Swift、Node.js 24+ 和 npm。
+- 完整版 Xcode（含已安装的 iOS 与 watchOS Simulator runtime）、XcodeGen、Swift、Node.js 24+ 和 npm。
 - 真机安装需要你自己的 Apple Developer Team、已开启开发者模式且与 Mac 建立开发连接的 iPhone 和 Apple Watch。
 - 外网 Relay 可选，需要你自己的 Cloudflare 账号和 Wrangler 登录。
 
@@ -103,13 +103,13 @@ make deploy-relay
 - 把公开的 HTTPS Relay URL 写入被忽略的 `Config/Local.xcconfig`。
 - 验证 `/healthz` 后提示重新构建三端 App。
 
-Relay 是公网 HTTPS 服务，但你的 Mac/设备并不会被直接暴露到公网。详细威胁模型见 [docs/zh-CN/relay-deployment.md](docs/zh-CN/relay-deployment.md) 和 [THREAT_MODEL.md](THREAT_MODEL.md)。
+Relay 是公网 HTTPS 服务，但你的 Mac/设备并不会被直接暴露到公网。详细威胁模型见 [docs/zh-CN/relay-deployment.md](docs/zh-CN/relay-deployment.md) 和英文版 [THREAT_MODEL.md](THREAT_MODEL.md)。
 
 ## Codex 集成（可选）
 
 Bridge 只监听 `127.0.0.1:60928/codex-hook`，并要求随机 Bearer Token。Token 首次启动时生成并保存到 Keychain。`scripts/codex-notify.sh` 会安全读取 Token 并把 Codex Hook 的 JSON 从 stdin 转发给 Bridge，不会把 Token 写进仓库或 shell 历史。
 
-参照 [examples/codex-hooks.json](examples/codex-hooks.json)，把脚本路径换成你克隆仓库后的绝对路径，再合并到自己的 Codex Hook 配置中。不要覆盖已有 Hook。详见 [docs/zh-CN/codex-integration.md](docs/zh-CN/codex-integration.md)。
+把 [examples/codex-hooks.json](examples/codex-hooks.json) 复制到仓库外，将 `<REPO_ROOT>` 替换为克隆目录的绝对路径，再合并到自己的 Codex Hook 配置。不要提交定制后的文件，也不要覆盖已有 Hook。详见 [docs/zh-CN/codex-integration.md](docs/zh-CN/codex-integration.md)。
 
 ## 开发命令
 
@@ -119,11 +119,14 @@ Bridge 只监听 `127.0.0.1:60928/codex-hook`，并要求随机 Bearer Token。T
 | `make doctor` | 只读检查开发环境 |
 | `make icons` | 从仓库内纯几何脚本重新生成全部 App 图标 |
 | `make test` | Swift、Bridge 和 Relay 测试 |
+| `make relay-audit` | 审计锁定的 Relay 依赖是否存在高风险漏洞 |
+| `make test-simulators` | iOS 单元测试与无需实时 Bridge 的 watchOS UI 冒烟测试 |
 | `make build` | 无签名构建 iOS/watchOS Simulator 与 macOS |
 | `make install-mac` | 本机签名并安装 Mac Bridge |
 | `make install-devices` | 用开发者自己的 Team 安装 iPhone/Watch 真机 |
 | `make deploy-relay` | 部署并初始化可选私有 Relay |
 | `make security` | 路径、凭据、私钥、禁止文件和 Git 历史扫描 |
+| `make verify` | 执行完整发布门禁，包括依赖审计和 Simulator 测试 |
 
 开发接口与调用示例见 [docs/zh-CN/api.md](docs/zh-CN/api.md)，贡献流程见 [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md)。
 

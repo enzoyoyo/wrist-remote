@@ -24,12 +24,12 @@ Apple Watch
                                       outbound WSS from Mac
 ```
 
-The Mac does not open a public inbound port. Until a developer deploys a relay, builds use a reserved `.invalid` URL so Internet mode cannot silently connect to an author-operated service.
+The LAN listener binds to one concrete, non-publicly-routable address on an approved non-tunnel local interface (RFC1918 IPv4, IPv4 link-local, or IPv6 ULA) and refuses to start when none exists. The Mac does not open a public inbound port. Until a developer deploys a relay, shared provisioning validation rejects the reserved `.invalid` URL before provisioning is accepted or any network request starts.
 
 ## Requirements
 
 - macOS 13+, iOS 17+, and watchOS 10+.
-- Full Xcode, XcodeGen, Swift, Node.js 24+, and npm.
+- Full Xcode, including installed iOS and watchOS Simulator runtimes, plus XcodeGen, Swift, Node.js 24+, and npm.
 - Device installation requires your Apple Developer Team and development-ready iPhone and Apple Watch.
 - The optional relay requires your Cloudflare account and a Wrangler login.
 
@@ -96,7 +96,7 @@ The relay is a public HTTPS endpoint, but it does not expose the Mac or Apple de
 
 The bridge listens only on `127.0.0.1:60928/codex-hook` and requires a random per-installation Bearer token stored in Keychain. `scripts/codex-notify.sh` retrieves that token and forwards hook JSON from stdin without placing the token in the repository or shell history.
 
-Copy and merge [examples/codex-hooks.json](examples/codex-hooks.json) into your own hook configuration after replacing the placeholder with your clone's absolute script path. Never overwrite unrelated hooks. See [docs/en/codex-integration.md](docs/en/codex-integration.md).
+Copy [examples/codex-hooks.json](examples/codex-hooks.json) outside the repository, replace `<REPO_ROOT>` with your clone's absolute path, and merge it into your own hook configuration. Never commit the customized file or overwrite unrelated hooks. See [docs/en/codex-integration.md](docs/en/codex-integration.md).
 
 ## Developer commands
 
@@ -106,11 +106,14 @@ Copy and merge [examples/codex-hooks.json](examples/codex-hooks.json) into your 
 | `make doctor` | Run read-only environment checks |
 | `make icons` | Regenerate every app icon from the repository's geometric source |
 | `make test` | Run Swift, bridge, and relay tests |
+| `make relay-audit` | Audit locked relay dependencies for high-severity vulnerabilities |
+| `make test-simulators` | Run iOS unit tests and the offline watchOS UI smoke tests |
 | `make build` | Build unsigned iOS/watchOS Simulator and macOS targets |
 | `make install-mac` | Locally sign and install the Mac bridge |
 | `make install-devices` | Sign and install iPhone/Watch apps with the developer's Team |
 | `make deploy-relay` | Deploy and initialize the optional private relay |
 | `make security` | Scan paths, credentials, keys, forbidden files, and Git history |
+| `make verify` | Run the complete release gate, including dependency audit and Simulator tests |
 
 API examples are in [docs/en/api.md](docs/en/api.md). Contribution instructions are in [CONTRIBUTING.md](CONTRIBUTING.md).
 

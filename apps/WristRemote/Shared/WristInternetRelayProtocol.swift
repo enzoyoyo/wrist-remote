@@ -15,11 +15,19 @@ enum WristInternetRelayConfiguration {
         configuredURL.scheme == "https",
         configuredURL.host != nil
         else {
-            // RFC 2606's .invalid TLD is deliberately unreachable. This makes
-            // local-only builds safe until the developer opts into a relay.
+            // RFC 2606's .invalid TLD is a disabled sentinel. Provisioning
+            // validation below prevents it from reaching any network client.
             return URL(string: "https://relay.example.invalid")!
         }
         return configuredURL
+    }
+
+    static func isOperationalBaseURL(_ baseURL: URL) -> Bool {
+        guard baseURL.scheme?.lowercased() == "https",
+              let rawHost = baseURL.host?.lowercased()
+        else { return false }
+        let host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
+        return !host.isEmpty && host != "invalid" && !host.hasSuffix(".invalid")
     }
     static let maximumClockSkewMilliseconds: Int64 = 30_000
     static let maximumFrameLifetimeMilliseconds: Int64 = 30_000
@@ -567,8 +575,7 @@ struct WristInternetRelayDeviceProvisioning: Codable, Equatable, Sendable {
     let encryptionKey: Data
 
     var isValid: Bool {
-        baseURL.scheme == "https"
-            && baseURL.host != nil
+        WristInternetRelayConfiguration.isOperationalBaseURL(baseURL)
             && roomID.uuidString.count == 36
             && deviceToken.count == 32
             && encryptionKey.count == 32

@@ -1,4 +1,5 @@
 import CryptoKit
+import Foundation
 import Network
 import XCTest
 @testable import WristRemoteBridge
@@ -106,6 +107,69 @@ final class WristRemoteServerIsolationTests: XCTestCase {
         ))
     }
 
+    func testListenerBindingSelectsPrivateIPv4OnAnApprovedNonTunnelInterface() {
+        let selected = WristRemoteListenerBindingPolicy.endpoint(
+            from: [
+                bindCandidate(interfaceName: "utun8", host: "192.168.50.2"),
+                bindCandidate(interfaceName: "en0", host: "203.0.113.9"),
+                bindCandidate(interfaceName: "en0", host: "2001:db8::9"),
+                bindCandidate(interfaceName: "en1", host: "192.168.50.3"),
+            ],
+            port: WristRemoteServer.port
+        )
+        XCTAssertEqual(selected, endpoint("192.168.50.3"))
+    }
+
+    func testListenerBindingUsesUniqueLocalIPv6WhenPrivateIPv4IsUnavailable() {
+        let selected = WristRemoteListenerBindingPolicy.endpoint(
+            from: [bindCandidate(interfaceName: "en0", host: "fd12:3456:789a::4")],
+            port: WristRemoteServer.port
+        )
+        XCTAssertEqual(selected, endpoint("fd12:3456:789a::4"))
+    }
+
+    func testListenerBindingFailsClosedWithoutANonPublicPhysicalAddress() {
+        let selected = WristRemoteListenerBindingPolicy.endpoint(
+            from: [
+                bindCandidate(interfaceName: "lo0", host: "127.0.0.1"),
+                bindCandidate(interfaceName: "en0", host: "198.51.100.4"),
+                bindCandidate(interfaceName: "en0", host: "2001:db8::4"),
+                bindCandidate(interfaceName: "en0", host: "mac.example.invalid"),
+            ],
+            port: WristRemoteServer.port
+        )
+        XCTAssertNil(selected)
+    }
+
+    @MainActor
+    func testPlaceholderRelayNeverStartsANetworkRequest() async throws {
+        RecordingURLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RecordingURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let credentials = WristInternetRelayMacCredentials(
+            provisioning: WristInternetRelayDeviceProvisioning(
+                baseURL: URL(string: "https://relay.example.invalid")!,
+                roomID: UUID(),
+                deviceID: UUID(),
+                deviceToken: Data(repeating: 1, count: 32),
+                encryptionKey: Data(repeating: 2, count: 32)
+            ),
+            macToken: Data(repeating: 3, count: 32)
+        )
+        let client = InternetRelayClient(credentials: credentials, urlSession: session)
+        defer {
+            client.stop()
+            session.invalidateAndCancel()
+        }
+
+        client.start()
+        try await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertEqual(RecordingURLProtocol.requestCount, 0)
+        XCTAssertEqual(client.status, .stopped)
+    }
+
     func testLivenessProbeIdentifierIsCanonicalAndCapabilityIsDedicated() {
         let probeID = UUID().uuidString
         XCTAssertTrue(BridgeWireMessage.isValidProbeID(probeID))
@@ -176,8 +240,40 @@ final class WristRemoteServerIsolationTests: XCTestCase {
         ))
     }
 
+    private func bindCandidate(
+        interfaceName: String,
+        host rawHost: String
+    ) -> WristRemoteLocalBindCandidate {
+        WristRemoteLocalBindCandidate(
+            interfaceName: interfaceName,
+            host: NWEndpoint.Host(rawHost)
+        )
+    }
 
     private func endpoint(_ rawHost: String) -> NWEndpoint {
         .hostPort(host: NWEndpoint.Host(rawHost), port: 60_927)
     }
+}
+
+private final class RecordingURLProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var count = 0
+
+    static var requestCount: Int {
+        lock.withLock { count }
+    }
+
+    static func reset() {
+        lock.withLock { count = 0 }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        Self.lock.withLock { Self.count += 1 }
+        client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
+    }
+
+    override func stopLoading() {}
 }

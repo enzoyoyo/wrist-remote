@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help check-node setup doctor generate icons test build install-mac install-devices deploy-relay security verify clean
+.PHONY: help check-node setup doctor generate icons test relay-audit test-simulators build install-mac install-devices deploy-relay security verify clean
 
 help:
 	@echo "Wrist Remote developer commands"
@@ -8,12 +8,14 @@ help:
 	@echo "  make doctor          Validate the local development environment"
 	@echo "  make icons           Regenerate deterministic app icons"
 	@echo "  make test            Run Swift, Xcode, and relay tests"
+	@echo "  make relay-audit     Audit relay dependencies for high-severity vulnerabilities"
+	@echo "  make test-simulators Run iOS unit and offline watchOS UI-smoke tests"
 	@echo "  make build           Build all Apple targets without signing"
 	@echo "  make install-mac     Build, locally sign, and install the Mac bridge"
 	@echo "  make install-devices Sign and install the iPhone and Apple Watch apps"
 	@echo "  make deploy-relay    Deploy the optional private Internet relay"
 	@echo "  make security        Run repository secret and privacy checks"
-	@echo "  make verify          Run security, tests, and unsigned builds"
+	@echo "  make verify          Run the complete release gate, including simulators and audit"
 
 check-node:
 	@command -v node >/dev/null 2>&1 || { echo "Node.js 24 or newer is required." >&2; exit 1; }
@@ -35,6 +37,12 @@ icons:
 test: check-node
 	@scripts/test-all.sh
 
+relay-audit: check-node
+	@cd apps/WristRemoteRelay && npm audit --audit-level=high --registry=https://registry.npmjs.org/
+
+test-simulators:
+	@scripts/test-simulators.sh
+
 build: check-node
 	@scripts/build-all.sh
 
@@ -50,7 +58,7 @@ deploy-relay: check-node
 security:
 	@scripts/security-check.sh
 
-verify: security test build
+verify: security test relay-audit test-simulators build
 
 clean:
 	@rm -rf apps/WristRemote/.build apps/WristRemote/build apps/WristRemoteBridge/.build apps/WristRemoteBridge/build

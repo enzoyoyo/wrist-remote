@@ -63,6 +63,105 @@ enum WristRemoteCodexTargetValidator {
     }
 }
 
+struct WristRemoteLocalBindCandidate: Equatable {
+    let interfaceName: String
+    let host: NWEndpoint.Host
+}
+
+enum WristRemoteListenerBindingPolicy {
+    static func endpoint(
+        from candidates: [WristRemoteLocalBindCandidate],
+        port rawPort: UInt16
+    ) -> NWEndpoint? {
+        guard let port = NWEndpoint.Port(rawValue: rawPort) else { return nil }
+        let ranked = candidates.compactMap { candidate -> (Int, Int, String, NWEndpoint.Host)? in
+            guard let interfaceRank = interfaceRank(candidate.interfaceName),
+                  let addressRank = addressRank(candidate.host)
+            else { return nil }
+            return (addressRank, interfaceRank, candidate.interfaceName, candidate.host)
+        }.sorted {
+            if $0.0 != $1.0 { return $0.0 < $1.0 }
+            if $0.1 != $1.1 { return $0.1 < $1.1 }
+            if $0.2 != $1.2 { return $0.2 < $1.2 }
+            return String(describing: $0.3) < String(describing: $1.3)
+        }
+        guard let host = ranked.first?.3 else { return nil }
+        return .hostPort(host: host, port: port)
+    }
+
+    static func currentEndpoint(port: UInt16) -> NWEndpoint? {
+        endpoint(from: currentCandidates(), port: port)
+    }
+
+    private static func addressRank(_ host: NWEndpoint.Host) -> Int? {
+        switch host {
+        case let .ipv4(address):
+            let bytes = [UInt8](address.rawValue)
+            guard bytes.count == 4 else { return nil }
+            if bytes[0] == 10
+                || (bytes[0] == 172 && (16 ... 31).contains(bytes[1]))
+                || (bytes[0] == 192 && bytes[1] == 168) {
+                return 0
+            }
+            if bytes[0] == 169 && bytes[1] == 254 { return 1 }
+            return nil
+        case let .ipv6(address):
+            let bytes = [UInt8](address.rawValue)
+            return bytes.count == 16 && (bytes[0] & 0xfe) == 0xfc ? 2 : nil
+        case .name:
+            return nil
+        @unknown default:
+            return nil
+        }
+    }
+
+    private static func interfaceRank(_ name: String) -> Int? {
+        if name.hasPrefix("en") { return 0 }
+        if name.hasPrefix("bridge") { return 1 }
+        if name.hasPrefix("awdl") { return 2 }
+        if name.hasPrefix("llw") { return 3 }
+        return nil
+    }
+
+    private static func currentCandidates() -> [WristRemoteLocalBindCandidate] {
+        var interfaces: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&interfaces) == 0, let first = interfaces else { return [] }
+        defer { freeifaddrs(interfaces) }
+
+        var result: [WristRemoteLocalBindCandidate] = []
+        var cursor: UnsafeMutablePointer<ifaddrs>? = first
+        while let current = cursor {
+            let interface = current.pointee
+            cursor = interface.ifa_next
+            guard (interface.ifa_flags & UInt32(IFF_UP)) != 0,
+                  let address = interface.ifa_addr
+            else { continue }
+            let name = String(cString: interface.ifa_name)
+            guard interfaceRank(name) != nil else { continue }
+
+            let host: NWEndpoint.Host?
+            switch address.pointee.sa_family {
+            case UInt8(AF_INET):
+                let value = UnsafeRawPointer(address)
+                    .assumingMemoryBound(to: sockaddr_in.self)
+                    .pointee.sin_addr
+                let data = withUnsafeBytes(of: value) { Data($0) }
+                host = IPv4Address(data).map(NWEndpoint.Host.ipv4)
+            case UInt8(AF_INET6):
+                let value = UnsafeRawPointer(address)
+                    .assumingMemoryBound(to: sockaddr_in6.self)
+                    .pointee.sin6_addr
+                let data = withUnsafeBytes(of: value) { Data($0) }
+                host = IPv6Address(data).map(NWEndpoint.Host.ipv6)
+            default:
+                host = nil
+            }
+            if let host { result.append(.init(interfaceName: name, host: host)) }
+        }
+        return result
+    }
+}
+
 enum WristRemotePeerAccessPolicy {
     static func permits(
         _ endpoint: NWEndpoint,
@@ -284,11 +383,12 @@ final class WristRemoteServer {
         do {
             let parameters = NWParameters.tcp
             parameters.includePeerToPeer = true
-            guard let port = NWEndpoint.Port(rawValue: Self.port) else {
-                publish(.failed("腕上遥控桥端口无效。"))
+            guard let localEndpoint = WristRemoteListenerBindingPolicy.currentEndpoint(port: Self.port) else {
+                publish(.failed("未找到可安全监听的本地局域网地址。"))
                 return
             }
-            let listener = try NWListener(using: parameters, on: port)
+            parameters.requiredLocalEndpoint = localEndpoint
+            let listener = try NWListener(using: parameters)
             listener.service = NWListener.Service(
                 name: Self.serviceName,
                 type: Self.serviceType

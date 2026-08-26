@@ -29,7 +29,8 @@ The Watch, iPhone, and Mac are trusted after explicit user pairing. Keychain and
 
 - First use requires a six-digit user-verification ceremony.
 - Session keys are negotiated per pairing/session and authenticated encryption protects frames.
-- The bridge restricts local connections to LAN source addresses and bounds message sizes and timeouts.
+- The listener binds before accept to one concrete, non-publicly-routable address on an approved non-tunnel local interface: RFC1918 IPv4, IPv4 link-local, or IPv6 ULA. No safe address means no listener.
+- After accept, the bridge independently restricts peers to allowed LAN source addresses and bounds message sizes and timeouts.
 
 ### Internet transport
 
@@ -48,7 +49,7 @@ The Watch, iPhone, and Mac are trusted after explicit user pairing. Keychain and
 
 ### Build and release
 
-- Repository defaults point to the reserved `.invalid` domain.
+- Repository defaults point to the reserved `.invalid` domain, which shared provisioning validation rejects before provisioning is accepted or any network request starts.
 - Production configuration is ignored by Git and stored with restrictive permissions.
 - Signing happens locally with each developer's identity. Source releases contain no signed artifacts.
 - CI uses unsigned builds and receives no production Apple, Cloudflare, relay, or Keychain secrets.

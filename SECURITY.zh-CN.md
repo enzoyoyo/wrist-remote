@@ -24,7 +24,7 @@
 
 ## 安全边界
 
-- Mac Bridge 只在显式配对后接受局域网会话，并限制局域网传输的来源地址。
+- Mac Bridge 在接受 TCP 连接前，只把局域网传输绑定到允许的非隧道本地接口上的一个具体、不可公网路由地址（RFC1918 IPv4、IPv4 链路本地地址或 IPv6 ULA）；找不到安全地址时拒绝启动。accept 后还会独立校验局域网来源，再进入显式配对。
 - 外网指令端到端加密；Relay 获取的是密文和传输元数据，而不是明文动作、音频、摘要或回复。
 - 设备/Mac 凭据与端到端密钥的客户端副本留在 Keychain；Cloudflare Worker secret store 保存允许的 room ID 和 bootstrap Mac bearer，Durable Object SQLite 保存 Token 哈希、随机生成的 Relay device UUID、初始化时间及重放/限流状态。
 - Relay 不提供离线指令队列，过期或重放的封包会被拒绝。
@@ -32,7 +32,7 @@
 - 签名凭据、描述文件、本地配置、生成工程、日志和构建产物均不得进入源码仓库。
 - Wrist Remote 使用独立标识和存储，不得读取、改写或拦截其他遥控器及输入设备的配置。
 
-完整信任模型和残余风险见 [THREAT_MODEL.md](THREAT_MODEL.md)。
+完整信任模型和残余风险见英文版 [THREAT_MODEL.md](THREAT_MODEL.md)。
 
 ## 发布门槛
 

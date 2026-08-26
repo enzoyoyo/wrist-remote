@@ -66,6 +66,12 @@ final class InternetRelayClient: ObservableObject {
     }
 
     func start() {
+        guard WristInternetRelayConfiguration.isOperationalBaseURL(
+            credentials.provisioning.baseURL
+        ) else {
+            status = .stopped
+            return
+        }
         guard credentials.isValid else {
             status = .unavailable("公网凭证无效")
             return

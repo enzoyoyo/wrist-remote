@@ -9,6 +9,7 @@ readonly TEMP_ROOT="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/WristRemoteTests.XXXXX
 trap '/bin/rm -rf -- "$TEMP_ROOT"' EXIT
 
 "$SCRIPT_DIR/doctor.sh"
+"$SCRIPT_DIR/test-release-tooling.sh"
 
 (
   cd "$REPO_ROOT/apps/WristRemote"
@@ -31,7 +32,7 @@ trap '/bin/rm -rf -- "$TEMP_ROOT"' EXIT
 
 (
   cd "$REPO_ROOT/apps/WristRemoteRelay"
-  [[ -d node_modules ]] || npm ci
+  npm ci
   npm run check
 )
 

@@ -35,7 +35,7 @@ Mac 不开放公网入站端口。公网 Relay 是一个可从互联网访问的
 
 ### Mac Bridge
 
-- 发布 `_wristremote._tcp`，使用固定本地端口 `60927`。
+- 把 `_wristremote._tcp` 的 `60927` 端口绑定到允许的非隧道本地接口上的一个具体 RFC1918 IPv4、IPv4 链路本地地址或 IPv6 ULA；没有安全地址就不启动 listener。
 - 校验局域网来源、协议角色、能力和配置修订号。
 - 通过 Accessibility 执行有限动作；不提供通用远程 shell。
 - 使用系统 Speech Framework 转写 Watch 音频。
@@ -53,7 +53,7 @@ Mac 不开放公网入站端口。公网 Relay 是一个可从互联网访问的
 
 ## 局域网安全会话
 
-首次会话使用 Curve25519 密钥协商，P-256 安装身份对临时会话公钥签名，双方显示由会话密钥派生的六位确认码。用户批准后，消息使用 ChaChaPoly 认证加密。Mac 只接受回环、链路本地、私有 IPv4/IPv6 以及与物理接口同前缀的 IPv6 来源，不解析主机名来绕过来源检查。
+创建 listener 时，Mac 先把本地端点限制到允许的非隧道本地接口上一个具体、不可公网路由的地址。首次会话随后使用 Curve25519 密钥协商，P-256 安装身份对临时会话公钥签名，双方显示由会话密钥派生的六位确认码。用户批准后，消息使用 ChaChaPoly 认证加密。accept 后的独立来源门禁只接受回环、链路本地、私有 IPv4/IPv6 以及与物理接口同前缀的 IPv6 来源，不解析主机名来绕过来源检查。
 
 ## 互联网会话
 
@@ -88,4 +88,4 @@ Watch 发送 PCM 音频，Mac 负责语言选择、重排、转写和结果回�
 | Mac/device token SHA-256 哈希、Relay device UUID、初始化时间、replay/序号与限流状态 | 用户部署的 Durable Object SQLite |
 | Relay ciphertext | 不持久化 |
 
-Cloudflare edge 还会在鉴权时接触 Bearer header；Cloudflare 和网络提供商可观察 IP、时间、大小、频率和 room URL 路径。详细边界见仓库根目录的 `THREAT_MODEL.md`。
+Cloudflare edge 还会在鉴权时接触 Bearer header；Cloudflare 和网络提供商可观察 IP、时间、大小、频率和 room URL 路径。详细边界见仓库根目录的英文版 `THREAT_MODEL.md`。

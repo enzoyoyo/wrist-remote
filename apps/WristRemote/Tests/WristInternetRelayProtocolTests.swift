@@ -150,6 +150,16 @@ final class WristInternetRelayProtocolTests: XCTestCase {
         )
         XCTAssertFalse(invalid.isValid)
         XCTAssertNil(invalid.encodedBase64())
+
+        let placeholder = WristInternetRelayDeviceProvisioning(
+            baseURL: try XCTUnwrap(URL(string: "https://relay.example.invalid")),
+            roomID: UUID(),
+            deviceID: UUID(),
+            deviceToken: Data(repeating: 1, count: 32),
+            encryptionKey: Data(repeating: 2, count: 32)
+        )
+        XCTAssertFalse(placeholder.isValid)
+        XCTAssertNil(placeholder.encodedBase64())
     }
 
     func testInternetAudioBatchingAdaptsToBacklogAndFinalTail() {

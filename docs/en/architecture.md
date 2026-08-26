@@ -35,7 +35,7 @@ The Mac does not expose a public inbound port. The relay is an Internet-accessib
 
 ### Mac bridge
 
-- Advertises `_wristremote._tcp` on local port `60927`.
+- Binds `_wristremote._tcp` on port `60927` to one concrete RFC1918 IPv4, IPv4 link-local, or IPv6 ULA address on an approved non-tunnel local interface. No safe address means no listener.
 - Validates LAN source address, protocol role, capabilities, and profile revision.
 - Performs a bounded action set through Accessibility; it is not a general remote shell.
 - Transcribes Watch audio with the system Speech framework.
@@ -53,7 +53,7 @@ The Mac does not expose a public inbound port. The relay is an Internet-accessib
 
 ## LAN secure session
 
-The first session uses Curve25519 key agreement. A P-256 installation identity signs the ephemeral session public key, and both sides display a six-digit code derived from the session key. After user approval, messages use ChaChaPoly authenticated encryption. The Mac permits only loopback, link-local, private IPv4/IPv6, and same-physical-prefix IPv6 sources; it does not resolve hostnames to bypass source checks.
+Listener creation first restricts the local endpoint to a concrete, non-publicly-routable address on an approved non-tunnel local interface. The first session then uses Curve25519 key agreement. A P-256 installation identity signs the ephemeral session public key, and both sides display a six-digit code derived from the session key. After user approval, messages use ChaChaPoly authenticated encryption. An independent post-accept gate permits only loopback, link-local, private IPv4/IPv6, and same-physical-prefix IPv6 sources; it does not resolve hostnames to bypass source checks.
 
 ## Internet session
 

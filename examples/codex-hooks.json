@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/absolute/path/to/wrist-remote/scripts/codex-notify.sh",
+            "command": "<REPO_ROOT>/scripts/codex-notify.sh",
             "timeout": 5
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/absolute/path/to/wrist-remote/scripts/codex-notify.sh",
+            "command": "<REPO_ROOT>/scripts/codex-notify.sh",
             "timeout": 5
           }
         ]

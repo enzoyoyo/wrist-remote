@@ -92,10 +92,9 @@ jobs:
         uses: ./.github/actions/setup-apple-tools
       - name: Create non-signing CI configuration
         run: cp Config/Local.xcconfig.example Config/Local.xcconfig
-      - name: Install locked relay dependencies
-        working-directory: apps/WristRemoteRelay
-        run: npm ci
       - name: Run all test suites
         run: make test
+      - name: Run iOS unit and offline watchOS UI-smoke tests
+        run: make test-simulators
       - name: Build Apple targets without signing
         run: make build

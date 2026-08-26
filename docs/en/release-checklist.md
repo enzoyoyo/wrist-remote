@@ -49,11 +49,11 @@ Unclear license or provenance blocks release even while the repository is privat
 
 ```bash
 make doctor
-make test
-make build
-make security
+make verify
 git status --short
 ```
+
+`make verify` includes the high-severity relay dependency audit and iOS/watchOS Simulator tests. It must fail rather than skip when compatible Simulator runtimes are absent.
 
 - [ ] Shared Swift tests pass.
 - [ ] Bridge XCTest passes.

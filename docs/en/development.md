@@ -25,22 +25,26 @@ Types under `apps/WristRemote/Shared` are not currently an external `public` API
 make setup       # tools, Local.xcconfig, XcodeGen, and npm ci
 make doctor      # read-only environment checks
 make test        # Swift package, bridge XCTest, relay check
+make relay-audit # high-severity audit of locked relay dependencies
+make test-simulators # iOS XCTest and offline watchOS UI smoke tests
 make build       # unsigned builds for all Apple targets
 make security    # path, credential, and Git-history scan
+make verify      # complete release gate, including audit and Simulator tests
 make clean       # remove only explicit generated directories
 ```
 
-`make setup` may install XcodeGen when Homebrew is already available, so it can change the development machine. `make doctor` installs and modifies nothing.
+`make setup` may install XcodeGen when Homebrew is already available, so it can change the development machine. `make doctor` installs and modifies nothing. Simulator runtime compatibility is checked by `make test-simulators` and the complete `make verify` gate, not by `make doctor`.
 
 ## Test layers
 
 - Shared Swift tests: profile completeness, protocol shapes, connection state, relay crypto, and gesture resolution.
 - Bridge XCTest: actions, pairing source restrictions, profile sessions, speech generations, Codex hook/reply, and isolation boundaries.
 - Relay check: Wrangler type generation, two TypeScript type checks, and Workers-runtime Vitest.
+- Simulator tests: the iOS XCTest target plus the two watchOS UI smoke tests that do not require a live bridge.
 - Unsigned builds: iOS Simulator, watchOS Simulator, and macOS Release compilation.
-- Manual devices: pairing, permissions, all 36 mapping slots, haptics, Chinese voice, Codex receipts, LAN/WAN failover, and lifecycle reconnect.
+- Connected/manual testing: the remaining watchOS UI tests require a live bridge; real-device checks cover pairing, permissions, all 36 mapping slots, haptics, Chinese voice, Codex receipts, LAN/WAN failover, and lifecycle reconnect.
 
-The first four layers do not replace manual device testing. If the operating system cannot enable UI automation, report the environment block instead of claiming a pass.
+The automated layers do not replace connected or real-device testing. If the operating system lacks the required Simulator runtimes or cannot enable UI automation, report the environment block instead of claiming a pass.
 
 ## Changing actions
 
@@ -88,7 +92,7 @@ A local UI copy or layout change should not modify the wire schema without a rea
 
 ## Dependencies and generated files
 
-- The relay is locked by `package-lock.json`; development and CI use `npm ci`.
+- The relay is locked by `package-lock.json`; tests and deployment reinstall with `npm ci` instead of trusting an existing `node_modules` directory.
 - Do not commit `node_modules`, `.wrangler`, or generated Worker types.
 - Xcode projects are generated from `project.yml`; do not hand-maintain `project.pbxproj`.
 - Record license, purpose, exact version, and distribution status for every dependency.
