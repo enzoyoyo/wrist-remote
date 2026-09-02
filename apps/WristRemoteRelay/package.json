@@ -13,7 +13,7 @@
     "check": "npm run cf-typegen && npm run typecheck && npm test"
   },
   "devDependencies": {
-    "@cloudflare/vitest-plugin": "1.0.0",
+    "@cloudflare/vitest-plugin": "1.1.2",
     "@types/node": "26.3.0",
     "typescript": "7.0.2",
     "vitest": "4.1.11",
