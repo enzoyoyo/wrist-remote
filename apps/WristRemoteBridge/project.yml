@@ -12,8 +12,8 @@ configFiles:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    CURRENT_PROJECT_VERSION: 7
-    MARKETING_VERSION: 0.3.0
+    CURRENT_PROJECT_VERSION: 16
+    MARKETING_VERSION: 0.6.0
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: $(WRISTREMOTE_DEVELOPMENT_TEAM)
     ENABLE_USER_SCRIPT_SANDBOXING: YES
@@ -30,7 +30,11 @@ targets:
         group: Shared Watch Wire Protocol
       - path: ../WristRemote/Shared/WristBridgeWireMessage.swift
         group: Shared Watch Wire Protocol
+      - path: ../WristRemote/Shared/WristDirectBridgeProtocol.swift
+        group: Shared Watch Wire Protocol
       - path: ../WristRemote/Shared/WatchRemoteProtocol.swift
+        group: Shared Watch Wire Protocol
+      - path: ../WristRemote/Shared/WatchCodexConversation.swift
         group: Shared Watch Wire Protocol
       - path: ../WristRemote/Shared/WristInternetRelayProtocol.swift
         group: Shared Watch Wire Protocol
@@ -47,17 +51,19 @@ targets:
         CFBundleDisplayName: 腕上遥控桥
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMultipleInstancesProhibited: true
         LSApplicationCategoryType: public.app-category.utilities
         LSMinimumSystemVersion: "13.0"
         NSBonjourServices:
           - _wristremote._tcp
         NSLocalNetworkUsageDescription: 用于连接同一局域网内的 Wrist Remote iPhone 与 Apple Watch。
-        NSSpeechRecognitionUsageDescription: 用于把 Apple Watch 传来的语音转成文字并输入当前文本框。
+        NSSpeechRecognitionUsageDescription: 仅用于把 Apple Watch 的前台听写转成文字并输入当前文本框；Codex 原始语音不使用此权限。
+        WristRemotePrivateOnly: $(WRISTREMOTE_PRIVATE_ONLY)
         WristRemoteRelayBaseURL: $(WRISTREMOTE_RELAY_BASE_URL)
         WristRemoteCodexExecutablePath: $(WRISTREMOTE_CODEX_EXECUTABLE_PATH)
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: $(WRISTREMOTE_BUNDLE_PREFIX).bridge
+        PRODUCT_BUNDLE_IDENTIFIER: $(WRISTREMOTE_BRIDGE_BUNDLE_IDENTIFIER)
         PRODUCT_NAME: WristRemoteBridge
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Generated/WristRemoteBridge-Info.plist
@@ -75,7 +81,7 @@ targets:
       - target: WristRemoteBridge
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: $(WRISTREMOTE_BUNDLE_PREFIX).bridge.tests
+        PRODUCT_BUNDLE_IDENTIFIER: $(WRISTREMOTE_BRIDGE_BUNDLE_IDENTIFIER).tests
         GENERATE_INFOPLIST_FILE: YES
 
 schemes:

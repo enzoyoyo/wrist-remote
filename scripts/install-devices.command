@@ -7,13 +7,18 @@ readonly SCRIPT_DIR="${0:A:h}"
 readonly REPO_ROOT="${SCRIPT_DIR:h}"
 readonly APP_DIR="$REPO_ROOT/apps/WristRemote"
 readonly PROJECT="$APP_DIR/WristRemote.xcodeproj"
+readonly SHARED_CONFIG="$REPO_ROOT/Config/WristRemote.xcconfig"
 readonly LOCAL_CONFIG="$REPO_ROOT/Config/Local.xcconfig"
 
 BUNDLE_PREFIX=''
 IOS_BUNDLE_ID=''
 WATCH_BUNDLE_ID=''
+EXISTING_INSTALL_REQUIRED='NO'
+EXISTING_INSTALL_TEAM_ID=''
 
 DRY_RUN=0
+ALLOW_WATCH_FIRST_INSTALL=0
+WATCH_INSTALL_CLASSIFICATION=''
 TEMP_ROOT=''
 
 usage() {
@@ -23,15 +28,16 @@ Wrist Remote 真机签名与安装 / Device signing and installation
 用法：
   scripts/install-devices.command
   scripts/install-devices.command --dry-run
+  scripts/install-devices.command --allow-watch-first-install
   scripts/install-devices.command --help
 
 默认行为：
-  1. 自动选择本机最高版本的完整 Xcode，不修改全局 xcode-select。
+  1. 优先使用 xcode-select 指向的完整稳定版 Xcode；否则选择最高稳定版。
   2. 自动选择唯一可用的真机 iPhone 和 Apple Watch。
   3. 从钥匙串唯一的 Apple Development 身份临时取得 Team ID。
   4. 先按 Apple Watch UDID 构建，再构建 iPhone 伴侣 App。
-  5. 校验三个 App 包的签名、描述文件、有效期和目标设备白名单。
-  6. 依次安装 iPhone、Apple Watch，查询安装结果并启动。
+  5. 校验历史升级身份、当前 Team、现装 App 身份及三个 App 包的描述文件。
+  6. 先利用新鲜配对隧道安装 Apple Watch，再原位升级 iPhone 并查询结果。
   7. 启动 iPhone 与 Apple Watch App。
 
 只在自动选择出现歧义时，才对当前一次运行设置以下环境变量：
@@ -41,11 +47,18 @@ Wrist Remote 真机签名与安装 / Device signing and installation
   WRIST_WATCH_UDID     目标 Apple Watch UDID
 
 --dry-run 只执行只读前置检查，不构建、不注册设备、不签名、不安装、不启动。
+--allow-watch-first-install 仅允许在已确认没有旧 App 的 Watch 上首次安装；
+iPhone 的原位升级和原 Team 校验仍然保留。
+自动选择会排除 Beta、RC、Preview、Seed 及其他预发布 Xcode。
+若确实要临时使用预发布版，必须显式设置 WRIST_DEVELOPER_DIR。
 脚本不会把 Team ID、UDID、账号或凭据写入仓库。
 
 The script auto-selects one connected iPhone, one connected Apple Watch,
-and one Apple Development identity. Set the temporary environment variables
-above only when automatic selection is ambiguous. Nothing is uploaded.
+and one Apple Development identity. Automatic Xcode selection rejects Beta,
+RC, preview, seed, and other pre-release products. Set WRIST_DEVELOPER_DIR
+explicitly for one run if a pre-release Xcode is intentional. Reviewed upgrades
+may use exact iPhone and Watch Bundle identifiers from ignored Local.xcconfig.
+Nothing is uploaded.
 USAGE
 }
 
@@ -66,10 +79,309 @@ cleanup() {
 }
 trap cleanup EXIT
 
+read_config_setting() {
+  local key="$1"
+  local shared_config="${2:-$SHARED_CONFIG}"
+  local local_config="${3:-$LOCAL_CONFIG}"
+  /usr/bin/sed -nE \
+    "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*([^[:space:]#]+).*$/\\1/p" \
+    "$shared_config" "$local_config" 2>/dev/null \
+    | /usr/bin/tail -n 1
+}
+
+resolve_bundle_identifiers() {
+  local shared_config="${1:-$SHARED_CONFIG}"
+  local local_config="${2:-$LOCAL_CONFIG}"
+
+  BUNDLE_PREFIX="$(
+    read_config_setting WRISTREMOTE_BUNDLE_PREFIX "$shared_config" "$local_config"
+  )"
+
+  IOS_BUNDLE_ID="$(
+    read_config_setting WRISTREMOTE_IOS_BUNDLE_IDENTIFIER "$shared_config" "$local_config"
+  )"
+  case "$IOS_BUNDLE_ID" in
+    '$(WRISTREMOTE_BUNDLE_PREFIX).ios'|'')
+      IOS_BUNDLE_ID="${BUNDLE_PREFIX}.ios"
+      ;;
+  esac
+
+  WATCH_BUNDLE_ID="$(
+    read_config_setting WRISTREMOTE_WATCH_BUNDLE_IDENTIFIER "$shared_config" "$local_config"
+  )"
+  case "$WATCH_BUNDLE_ID" in
+    '$(WRISTREMOTE_IOS_BUNDLE_IDENTIFIER).watchkitapp'|'')
+      WATCH_BUNDLE_ID="${IOS_BUNDLE_ID}.watchkitapp"
+      ;;
+  esac
+
+  EXISTING_INSTALL_REQUIRED="$(
+    read_config_setting WRISTREMOTE_EXISTING_INSTALL_REQUIRED "$shared_config" "$local_config"
+  )"
+  EXISTING_INSTALL_REQUIRED="${EXISTING_INSTALL_REQUIRED:u}"
+  [[ -n "$EXISTING_INSTALL_REQUIRED" ]] || EXISTING_INSTALL_REQUIRED='NO'
+  EXISTING_INSTALL_TEAM_ID="$(
+    read_config_setting WRISTREMOTE_EXISTING_INSTALL_TEAM_ID "$shared_config" "$local_config"
+  )"
+}
+
+validate_bundle_identifier() {
+  local value="$1"
+  local label="$2"
+  local normalized="${value:l}"
+
+  [[ "$value" =~ '^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)+$' ]] \
+    || die "$label 必须是有效的反向域名 Bundle 标识。"
+  [[ "$normalized" != *'.example.'* && "$normalized" != example.* ]] \
+    || die "$label 仍是示例占位值；已阻止真机安装。"
+  [[ "$normalized" != *'.invalid'* && "$normalized" != *'replace_'* ]] \
+    || die "$label 仍是无效占位值；已阻止真机安装。"
+}
+
+validate_mobile_bundle_identifiers() {
+  validate_bundle_identifier "$IOS_BUNDLE_ID" 'iPhone Bundle ID'
+  validate_bundle_identifier "$WATCH_BUNDLE_ID" 'Apple Watch Bundle ID'
+  [[ "$WATCH_BUNDLE_ID" == "${IOS_BUNDLE_ID}.watchkitapp" ]] \
+    || die 'Apple Watch Bundle ID 必须严格位于 iPhone Bundle ID 的 .watchkitapp 命名空间。'
+  [[ "$EXISTING_INSTALL_REQUIRED" == YES || "$EXISTING_INSTALL_REQUIRED" == NO ]] \
+    || die 'WRISTREMOTE_EXISTING_INSTALL_REQUIRED 只接受 YES 或 NO。'
+  if [[ "$EXISTING_INSTALL_REQUIRED" == YES ]]; then
+    [[ "$EXISTING_INSTALL_TEAM_ID" =~ '^[A-Z0-9]{10}$' ]] \
+      || die '受控升级必须配置原安装使用的 10 位 Apple Developer Team ID。'
+  fi
+}
+
+validate_existing_install_team() {
+  local selected_team_id="$1"
+  if [[ "$EXISTING_INSTALL_REQUIRED" == YES \
+        && "$selected_team_id" != "$EXISTING_INSTALL_TEAM_ID" ]]; then
+    die '当前 Apple Development Team 与受控升级记录的原安装 Team 不一致。'
+  fi
+}
+
+classify_installed_apps() {
+  local apps_json="$1"
+  local expected_bundle_id="$2"
+  local label="$3"
+  local existing_required="$4"
+
+  /usr/bin/python3 - \
+      "$apps_json" "$expected_bundle_id" "$label" "$existing_required" <<'PY'
+import json
+import sys
+
+path, expected, label, existing_required = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    document = json.load(handle)
+
+if document.get("info", {}).get("outcome") != "success":
+    print(f"{label} 的已安装 App 身份查询未成功。", file=sys.stderr)
+    raise SystemExit(2)
+
+apps = document.get("result", {}).get("apps", [])
+exact = [item for item in apps if item.get("bundleIdentifier") == expected]
+
+def is_related(item):
+    bundle = str(item.get("bundleIdentifier", "")).lower()
+    expected_is_watch = expected.lower().endswith(".watchkitapp")
+    candidate_is_watch = bundle.endswith(".watchkitapp")
+    if expected_is_watch != candidate_is_watch:
+        # An iPhone inventory may expose its embedded Watch companion. It is
+        # part of the same product, not a duplicate app on the current platform.
+        return False
+    names = " ".join(
+        str(item.get(key, ""))
+        for key in ("name", "displayName", "localizedName", "executable")
+    ).lower()
+    compact_names = names.replace(" ", "").replace("-", "")
+    return "wristremote" in bundle or "wristremote" in compact_names
+
+related_other = [
+    item
+    for item in apps
+    if item.get("bundleIdentifier") != expected and is_related(item)
+]
+
+if related_other:
+    print(
+        f"{label} 上检测到 {len(related_other)} 个不同身份的 Wrist Remote；"
+        "为避免生成重复 App，已停止安装。",
+        file=sys.stderr,
+    )
+    raise SystemExit(3)
+
+if exact:
+    print("exact")
+    raise SystemExit(0)
+
+if existing_required == "YES":
+    print(
+        f"{label} 上没有找到经过审核的现有安装；已阻止把升级误执行为新装。",
+        file=sys.stderr,
+    )
+    raise SystemExit(4)
+
+print("fresh")
+PY
+}
+
+verify_existing_install_identity() {
+  local udid="$1"
+  local bundle_id="$2"
+  local label="$3"
+  local slug="$4"
+  local apps_json="$TEMP_ROOT/apps-before-install-${slug}.json"
+  local classification
+  local require_existing="$EXISTING_INSTALL_REQUIRED"
+  if [[ "$slug" == watch && "$ALLOW_WATCH_FIRST_INSTALL" == 1 ]]; then
+    require_existing='NO'
+  fi
+
+  if ! /usr/bin/xcrun devicectl device info apps \
+      --device "$udid" \
+      --include-default-apps \
+      --timeout 30 \
+      --quiet \
+      --json-output "$apps_json"; then
+    die "$label 的已安装 App 身份无法读取；已停止安装。"
+  fi
+
+  if ! classification="$(
+    classify_installed_apps \
+      "$apps_json" "$bundle_id" "$label" "$require_existing"
+  )"; then
+    die "$label 的原位升级身份校验失败。"
+  fi
+
+  [[ "$slug" != watch ]] || WATCH_INSTALL_CLASSIFICATION="$classification"
+
+  if [[ "$classification" == exact ]]; then
+    print -u2 -- "$label 已确认同一 App 身份，将执行原位升级。"
+  else
+    print -u2 -- "$label 未发现同名旧安装，将执行首次安装。"
+  fi
+}
+
+verify_existing_profile_identity() {
+  local bundle_id="$1"
+  local team_id="$2"
+  local label="$3"
+  local decoded_profile_directory="${4:-}"
+
+  [[ "$EXISTING_INSTALL_REQUIRED" == YES ]] || return 0
+
+  /usr/bin/python3 - \
+      "$bundle_id" "$team_id" "$label" "$decoded_profile_directory" \
+      "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" \
+      "$HOME/Library/MobileDevice/Provisioning Profiles" <<'PY'
+import datetime
+import pathlib
+import plistlib
+import subprocess
+import sys
+
+bundle_id, team_id, label, test_profile_directory, *roots = sys.argv[1:]
+if test_profile_directory:
+    roots = [test_profile_directory]
+now = datetime.datetime.now(datetime.timezone.utc)
+matching_bundle = 0
+matching_current_team = 0
+
+for root_value in roots:
+    root = pathlib.Path(root_value)
+    if not root.is_dir():
+        continue
+    for path in root.iterdir():
+        accepted_suffixes = (
+            {".plist"}
+            if test_profile_directory
+            else {".mobileprovision", ".provisionprofile"}
+        )
+        if path.suffix not in accepted_suffixes:
+            continue
+        try:
+            if test_profile_directory:
+                decoded = path.read_bytes()
+            else:
+                decoded = subprocess.run(
+                    ["/usr/bin/security", "cms", "-D", "-i", str(path)],
+                    check=True,
+                    capture_output=True,
+                ).stdout
+            profile = plistlib.loads(decoded)
+        except (OSError, subprocess.SubprocessError, plistlib.InvalidFileException):
+            continue
+
+        entitlements = profile.get("Entitlements", {})
+        application_id = entitlements.get("application-identifier", "")
+        profile_teams = profile.get("TeamIdentifier", [])
+        suffix = application_id.split(".", 1)[1] if "." in application_id else ""
+        if suffix != bundle_id:
+            continue
+        matching_bundle += 1
+
+        expires = profile.get("ExpirationDate")
+        if not isinstance(expires, datetime.datetime):
+            continue
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=datetime.timezone.utc)
+        # Historical profiles prove identity continuity, not permission to
+        # install today. A renewed build is checked for expiry separately by
+        # verify_profile before installation.
+        if team_id not in profile_teams:
+            continue
+        if application_id != f"{team_id}.{bundle_id}":
+            continue
+        matching_current_team += 1
+
+if matching_current_team == 0:
+    if matching_bundle:
+        print(
+            f"{label} 的历史描述文件不属于当前 Apple Development Team。",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            f"没有找到 {label} 的历史描述文件，无法证明这是同一 App 身份。",
+            file=sys.stderr,
+        )
+    raise SystemExit(2)
+
+print(f"{label} 的历史 Bundle 与当前 Team 已确认；新构建仍须通过有效期检查。", file=sys.stderr)
+PY
+}
+
+verify_mobile_install_targets() {
+  verify_existing_install_identity \
+    "$WATCH_UDID" "$WATCH_BUNDLE_ID" 'Apple Watch' watch
+  verify_existing_install_identity \
+    "$IPHONE_UDID" "$IOS_BUNDLE_ID" iPhone iphone
+}
+
+verify_mobile_signing_continuity() {
+  if [[ "$EXISTING_INSTALL_REQUIRED" == YES ]] && command -v ideviceinstaller >/dev/null 2>&1; then
+    # The device's signed entitlements are stronger evidence than a cached
+    # provisioning profile, which may be removed during normal Xcode cleanup.
+    /usr/bin/python3 "$SCRIPT_DIR/lib/installed-app-identity.py" \
+      --udid "$IPHONE_HARDWARE_UDID" --bundle "$IOS_BUNDLE_ID" --team "$TEAM_ID" \
+      || die 'iPhone 现装签名身份不符合受控升级记录。'
+  else
+    verify_existing_profile_identity "$IOS_BUNDLE_ID" "$TEAM_ID" 'iPhone 伴侣 App'
+  fi
+  if [[ "$WATCH_INSTALL_CLASSIFICATION" == fresh && "$ALLOW_WATCH_FIRST_INSTALL" == 1 ]]; then
+    print -- 'Watch 已确认无旧 App；本次明确允许首次安装，仍校验新包 Team 与设备。'
+  else
+    verify_existing_profile_identity "$WATCH_BUNDLE_ID" "$TEAM_ID" 'Apple Watch App'
+  fi
+}
+
 for argument in "$@"; do
   case "$argument" in
     --dry-run)
       DRY_RUN=1
+      ;;
+    --allow-watch-first-install)
+      ALLOW_WATCH_FIRST_INSTALL=1
       ;;
     -h|--help)
       usage
@@ -93,34 +405,178 @@ choose_developer_dir() {
   fi
 
   local -a candidates
-  local active candidate version major minor
-  local best='' best_major=-1 best_minor=-1
+  local active search_root
 
-  active="$(/usr/bin/xcode-select -p 2>/dev/null || true)"
+  # Tests inject an isolated applications root. Normal invocations always use
+  # xcode-select plus /Applications and never mutate the global selection.
+  if (( $# == 2 )); then
+    active="$1"
+    search_root="$2"
+  else
+    active="$(/usr/bin/xcode-select -p 2>/dev/null || true)"
+    search_root='/Applications'
+  fi
   [[ -n "$active" ]] && candidates+=("$active")
-  candidates+=(/Applications/Xcode*.app/Contents/Developer(N))
+  candidates+=("$search_root"/Xcode*.app/Contents/Developer(N))
 
-  for candidate in "${candidates[@]}"; do
-    [[ -x "$candidate/usr/bin/xcodebuild" ]] || continue
-    version="$(
-      DEVELOPER_DIR="$candidate" "$candidate/usr/bin/xcodebuild" -version 2>/dev/null \
-        | /usr/bin/awk 'NR == 1 {print $2}'
-    )"
-    [[ "$version" =~ '^([0-9]+)(\.([0-9]+))?' ]] || continue
-    major="${match[1]}"
-    minor="${match[3]:-0}"
-    if (( major > best_major || (major == best_major && minor >= best_minor) )); then
-      best="$candidate"
-      best_major="$major"
-      best_minor="$minor"
-    fi
-  done
+  /usr/bin/python3 - "$active" "${candidates[@]}" <<'PY'
+import os
+import pathlib
+import plistlib
+import re
+import subprocess
+import sys
 
-  [[ -n "$best" ]] || {
-    print -u2 -- '没有找到完整 Xcode。请先安装 Xcode，或临时设置 WRIST_DEVELOPER_DIR。'
-    return 1
-  }
-  print -r -- "$best"
+active = os.path.realpath(sys.argv[1]) if sys.argv[1] else ""
+candidates = sys.argv[2:]
+prerelease_pattern = re.compile(
+    r"(?:^|[^a-z0-9])(?:beta|release[ _-]*candidate|rc(?:[ _-]*\d+)?|"
+    r"preview|developer[ _-]*preview|seed|pre[ _-]?release)(?:$|[^a-z0-9])",
+    re.IGNORECASE,
+)
+
+
+def read_plist(path):
+    try:
+        with path.open("rb") as handle:
+            value = plistlib.load(handle)
+            return value if isinstance(value, dict) else {}
+    except (OSError, plistlib.InvalidFileException):
+        return {}
+
+
+def version_tuple(value):
+    match = re.fullmatch(r"(\d+(?:\.\d+){0,3})(?:\s.*)?", value.strip())
+    if not match:
+        return None
+    parts = tuple(int(part) for part in match.group(1).split("."))
+    return parts + (0,) * (4 - len(parts))
+
+
+def inspect_candidate(raw_path):
+    developer = pathlib.Path(raw_path).resolve()
+    if developer.name != "Developer" or developer.parent.name != "Contents":
+        return None
+    app = developer.parent.parent
+    if app.suffix.lower() != ".app":
+        return None
+
+    xcodebuild = developer / "usr/bin/xcodebuild"
+    xcode_app = app / "Contents/MacOS/Xcode"
+    info_path = app / "Contents/Info.plist"
+    version_path = app / "Contents/version.plist"
+    if not (xcodebuild.is_file() and os.access(xcodebuild, os.X_OK)):
+        return None
+    if not (xcode_app.is_file() and os.access(xcode_app, os.X_OK)):
+        return None
+
+    info = read_plist(info_path)
+    product = read_plist(version_path)
+    if info.get("CFBundleIdentifier") != "com.apple.dt.Xcode":
+        return None
+
+    environment = os.environ.copy()
+    environment["DEVELOPER_DIR"] = str(developer)
+    try:
+        completed = subprocess.run(
+            [str(xcodebuild), "-version"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=environment,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    output = completed.stdout.strip()
+    lines = output.splitlines()
+    command_version = ""
+    command_build = ""
+    if lines:
+        match = re.fullmatch(r"Xcode\s+(.+)", lines[0].strip())
+        if match:
+            command_version = match.group(1).strip()
+    if len(lines) > 1:
+        match = re.fullmatch(r"Build version\s+(.+)", lines[1].strip())
+        if match:
+            command_build = match.group(1).strip()
+
+    bundle_version = str(info.get("CFBundleShortVersionString", "")).strip()
+    product_build = str(product.get("ProductBuildVersion", "")).strip()
+    parsed_version = version_tuple(command_version)
+    if parsed_version is None or version_tuple(bundle_version) != parsed_version:
+        return None
+    if product_build and command_build and product_build != command_build:
+        return None
+
+    beta_plist = app / "Contents/Resources/BetaVersion.plist"
+    textual_metadata = " ".join(
+        str(value)
+        for value in (
+            app.name,
+            output,
+            info.get("CFBundleName", ""),
+            info.get("CFBundleDisplayName", ""),
+            info.get("CFBundleGetInfoString", ""),
+            bundle_version,
+            product_build,
+        )
+    )
+    is_prerelease = beta_plist.is_file() or bool(
+        prerelease_pattern.search(textual_metadata)
+    )
+    return {
+        "path": str(developer),
+        "resolved": os.path.realpath(developer),
+        "version": parsed_version,
+        "prerelease": is_prerelease,
+    }
+
+
+records = []
+seen = set()
+for candidate in candidates:
+    resolved = os.path.realpath(candidate)
+    if resolved in seen:
+        continue
+    seen.add(resolved)
+    record = inspect_candidate(candidate)
+    if record is not None:
+        records.append(record)
+
+active_stable = next(
+    (
+        record
+        for record in records
+        if record["resolved"] == active and not record["prerelease"]
+    ),
+    None,
+)
+if active_stable is not None:
+    print(active_stable["path"])
+    raise SystemExit(0)
+
+stable = [record for record in records if not record["prerelease"]]
+if stable:
+    selected = max(stable, key=lambda record: record["version"])
+    print(selected["path"])
+    raise SystemExit(0)
+
+if any(record["prerelease"] for record in records):
+    print(
+        "只找到 Beta、RC 或其他预发布 Xcode；自动选择已停止。"
+        "如果确实要使用它，请只对本次运行显式设置 WRIST_DEVELOPER_DIR。",
+        file=sys.stderr,
+    )
+else:
+    print(
+        "没有找到完整稳定版 Xcode。请先安装 Xcode，"
+        "或临时设置 WRIST_DEVELOPER_DIR。",
+        file=sys.stderr,
+    )
+raise SystemExit(1)
+PY
 }
 
 select_device() {
@@ -155,7 +611,7 @@ if requested:
         if requested in (item.get("identifier"), item.get("hardwareUDID"))
     ]
     if not matches:
-        print(f"{label} 指定的 UDID 不存在或平台不符：{requested}", file=sys.stderr)
+        print(f"{label} 指定的 UDID 不存在或平台不符。", file=sys.stderr)
         raise SystemExit(3)
 else:
     matches = [item for item in matches if item.get("available") is True]
@@ -167,10 +623,7 @@ if len(matches) != 1:
             file=sys.stderr,
         )
     else:
-        summary = ", ".join(
-            f"{item.get('name', '未命名')} ({item.get('identifier', '无 UDID')})"
-            for item in matches
-        )
+        summary = ", ".join(item.get("name", "未命名") for item in matches)
         env_name = (
             "WRIST_IPHONE_UDID"
             if platform.endswith("iphoneos")
@@ -312,7 +765,23 @@ check_lock_state() {
       --timeout 30 \
       --quiet \
       --json-output "$lock_json"; then
-    die "无法读取 $label 的锁定状态。"
+    # A paired Watch can drop its RSD tunnel between two otherwise read-only
+    # CoreDevice calls. Refresh once and retry; never loop or weaken the lock
+    # gate, because an ambiguous device state must still stop installation.
+    local refresh_json="$TEMP_ROOT/lock-refresh-${slug}.json"
+    print -u2 -- "$label 开发隧道短暂断开；正在执行一次只读刷新。"
+    if ! /usr/bin/xcrun devicectl device info details \
+        --device "$udid" \
+        --timeout 30 \
+        --quiet \
+        --json-output "$refresh_json" \
+      || ! /usr/bin/xcrun devicectl device info lockState \
+        --device "$udid" \
+        --timeout 30 \
+        --quiet \
+        --json-output "$lock_json"; then
+      die "无法读取 $label 的锁定状态。"
+    fi
   fi
 
   if ! lock_status="$(/usr/bin/python3 - "$lock_json" <<'PY'
@@ -339,7 +808,7 @@ PY
 
   if [[ "$lock_status" != ready ]]; then
     if (( DRY_RUN )); then
-      print -u2 -- "只读检查提示：$label 当前锁定；实际重装会要求先在设备上解锁。"
+      die "只读检查无法在 $label 锁定时可靠读取已安装 App；请解锁并保持屏幕唤醒后重试。"
     else
       die "$label 当前锁定。请在设备上解锁并保持屏幕唤醒，然后重新运行。"
     fi
@@ -438,6 +907,8 @@ build_target() {
       -allowProvisioningUpdates \
       -allowProvisioningDeviceRegistration \
       WRISTREMOTE_BUNDLE_PREFIX="$BUNDLE_PREFIX" \
+      WRISTREMOTE_IOS_BUNDLE_IDENTIFIER="$IOS_BUNDLE_ID" \
+      WRISTREMOTE_WATCH_BUNDLE_IDENTIFIER="$WATCH_BUNDLE_ID" \
       DEVELOPMENT_TEAM="$TEAM_ID" \
       CODE_SIGN_STYLE=Automatic \
       -quiet \
@@ -601,23 +1072,62 @@ launch_app() {
     || die "$label 启动结果校验失败。"
 }
 
+case "${WRIST_INSTALLER_TEST_ENTRYPOINT:-}" in
+  choose-developer-dir)
+    choose_developer_dir \
+      "${WRIST_INSTALLER_TEST_ACTIVE_DIR:-}" \
+      "${WRIST_INSTALLER_TEST_SEARCH_ROOT:-/Applications}"
+    exit
+    ;;
+  resolve-bundle-identifiers)
+    resolve_bundle_identifiers \
+      "${WRIST_INSTALLER_TEST_SHARED_CONFIG:?}" \
+      "${WRIST_INSTALLER_TEST_LOCAL_CONFIG:?}"
+    validate_mobile_bundle_identifiers
+    print -r -- "IOS=$IOS_BUNDLE_ID"
+    print -r -- "WATCH=$WATCH_BUNDLE_ID"
+    print -r -- "REQUIRE_EXISTING=$EXISTING_INSTALL_REQUIRED"
+    exit
+    ;;
+  classify-installed-apps)
+    classify_installed_apps \
+      "${WRIST_INSTALLER_TEST_APPS_JSON:?}" \
+      "${WRIST_INSTALLER_TEST_EXPECTED_BUNDLE_ID:?}" \
+      '测试设备' \
+      "${WRIST_INSTALLER_TEST_REQUIRE_EXISTING:-NO}"
+    exit
+    ;;
+  validate-existing-profile)
+    EXISTING_INSTALL_REQUIRED='YES'
+    verify_existing_profile_identity \
+      "${WRIST_INSTALLER_TEST_EXPECTED_BUNDLE_ID:?}" \
+      "${WRIST_INSTALLER_TEST_TEAM_ID:?}" \
+      '测试 App' \
+      "${WRIST_INSTALLER_TEST_PROFILE_DIRECTORY:?}"
+    exit
+    ;;
+  validate-existing-team)
+    resolve_bundle_identifiers \
+      "${WRIST_INSTALLER_TEST_SHARED_CONFIG:?}" \
+      "${WRIST_INSTALLER_TEST_LOCAL_CONFIG:?}"
+    validate_mobile_bundle_identifiers
+    validate_existing_install_team "${WRIST_INSTALLER_TEST_TEAM_ID:?}"
+    exit
+    ;;
+esac
+
 command -v xcodegen >/dev/null 2>&1 \
   || die '找不到 XcodeGen。请先运行 make setup。'
+[[ -f "$SHARED_CONFIG" ]] \
+  || die '缺少 Config/WristRemote.xcconfig。'
 [[ -f "$LOCAL_CONFIG" ]] \
   || die '缺少 Config/Local.xcconfig。请先运行 make setup 并填写唯一 Bundle 前缀。'
 
-BUNDLE_PREFIX="${WRISTREMOTE_BUNDLE_PREFIX:-$(
-  /usr/bin/sed -nE \
-    's/^[[:space:]]*WRISTREMOTE_BUNDLE_PREFIX[[:space:]]*=[[:space:]]*([^[:space:]#]+).*$/\1/p' \
-    "$LOCAL_CONFIG" | /usr/bin/tail -n 1
-)}"
+resolve_bundle_identifiers
 [[ "$BUNDLE_PREFIX" =~ '^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)+$' ]] \
   || die 'WRISTREMOTE_BUNDLE_PREFIX 必须是反向域名格式，例如 org.example.wristremote。'
-[[ "$BUNDLE_PREFIX" != *'.example.'* && "$BUNDLE_PREFIX" != example.* ]] \
-  || die '真机安装前请在 Config/Local.xcconfig 设置你自己的唯一 Bundle 前缀。'
-IOS_BUNDLE_ID="${BUNDLE_PREFIX}.ios"
-WATCH_BUNDLE_ID="${BUNDLE_PREFIX}.ios.watchkitapp"
-readonly BUNDLE_PREFIX IOS_BUNDLE_ID WATCH_BUNDLE_ID
+validate_mobile_bundle_identifiers
+readonly BUNDLE_PREFIX IOS_BUNDLE_ID WATCH_BUNDLE_ID EXISTING_INSTALL_REQUIRED EXISTING_INSTALL_TEAM_ID
 
 cd "$APP_DIR"
 xcodegen generate --spec project.yml >/dev/null
@@ -675,6 +1185,16 @@ for device in document.get("result", {}).get("devices", []):
     if isinstance(version, dict):
         version = version.get("stringValue")
     version = version or legacy_device.get("osVersionNumber") or "未知"
+    connection_state = connection.get("state")
+    pairing_state = connection.get("pairingState")
+    # CoreDevice commonly reports a paired iPhone/Watch as disconnected until
+    # the first details request creates its short-lived RSD tunnel. Treat that
+    # state as selectable, then let preflight_device establish and verify the
+    # actual development connection before any build, signing, or install.
+    paired_candidate = pairing_state == "paired" and connection_state in {
+        "connected",
+        "disconnected",
+    }
     normalized.append({
         "name": state.get("name") or legacy_device.get("name") or "未命名",
         "identifier": device.get("identifier"),
@@ -685,7 +1205,9 @@ for device in document.get("result", {}).get("devices", []):
         ),
         "platform": platform,
         "operatingSystemVersion": version,
-        "available": connection.get("state") == "connected",
+        "available": paired_candidate,
+        "connectionState": connection_state,
+        "pairingState": pairing_state,
         "simulator": hardware.get("reality") != "physical",
         "ignored": False,
     })
@@ -724,8 +1246,8 @@ if ! WATCH_HARDWARE_UDID="$(device_hardware_udid "$WATCH_UDID")"; then
 fi
 readonly IPHONE_HARDWARE_UDID WATCH_HARDWARE_UDID
 
-preflight_device "$IPHONE_UDID" iPhone iphone
 preflight_device "$WATCH_UDID" 'Apple Watch' watch
+preflight_device "$IPHONE_UDID" iPhone iphone
 
 if ! IPHONE_OS_MAJOR="$(device_os_major "$IPHONE_UDID")"; then
   die '无法确定 iPhone 系统版本。'
@@ -750,9 +1272,15 @@ fi
 readonly TEAM_ID
 print -- '已从钥匙串选择 Apple Development 身份（不会写入工程）。'
 
+validate_existing_install_team "$TEAM_ID"
+
+verify_mobile_install_targets
+verify_mobile_signing_continuity
+
 if (( DRY_RUN )); then
+  verify_mobile_install_targets
   print -- '只读检查通过：未构建、未注册设备、未签名、未安装、未启动。'
-  print -- '实际执行顺序：Watch 构建 → iPhone 构建 → 三包校验 → iPhone 安装 → Watch 安装 → 两端启动。'
+  print -- '实际执行顺序：Watch 构建 → iPhone 构建 → 三包校验 → Watch 安装 → iPhone 安装 → 两端启动。'
   exit 0
 fi
 
@@ -792,18 +1320,27 @@ verify_profile \
   'iPhone 包内嵌 Apple Watch App' \
   watch-embedded
 
-install_and_verify \
-  "$IPHONE_UDID" \
-  "$IPHONE_APP" \
-  "$IOS_BUNDLE_ID" \
-  'iPhone 伴侣 App' \
-  iphone
+# This is the final pre-install identity gate. Re-read both devices after the
+# potentially long signing build so a disconnect or app-identity change fails
+# closed instead of creating a second installation.
+verify_mobile_install_targets
+verify_mobile_signing_continuity
+
+# Install the Watch first while its short-lived paired-device tunnel is fresh.
+# The iPhone companion follows with the same verified identity and embedded
+# Watch build; neither path uninstalls or looks up apps by display name.
 install_and_verify \
   "$WATCH_UDID" \
   "$WATCH_APP" \
   "$WATCH_BUNDLE_ID" \
   'Apple Watch App' \
   watch
+install_and_verify \
+  "$IPHONE_UDID" \
+  "$IPHONE_APP" \
+  "$IOS_BUNDLE_ID" \
+  'iPhone 伴侣 App' \
+  iphone
 
 launch_app "$IPHONE_UDID" "$IOS_BUNDLE_ID" 'iPhone 伴侣 App' iphone
 launch_app "$WATCH_UDID" "$WATCH_BUNDLE_ID" 'Apple Watch App' watch

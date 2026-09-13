@@ -5,6 +5,7 @@ import UIKit
 
 @MainActor
 final class WatchRelayController: NSObject, ObservableObject {
+    nonisolated static let liveStatusRecoveryMilliseconds = 10_000
     enum InternetProfileSyncState: Equatable {
         case unavailable
         case configured
@@ -43,10 +44,20 @@ final class WatchRelayController: NSObject, ObservableObject {
         profileRevision: Int,
         finalSequence: UInt64?
     )?
+    private struct PendingWatchAudioReply {
+        let streamID: UUID
+        let profileRevision: Int
+        let sequence: UInt64
+        let replyHandler: (Data) -> Void
+    }
     private var audioStreamGate = WatchRemoteAudioStreamGate()
+    private var pendingWatchAudioReplies: [UInt64: PendingWatchAudioReply] = [:]
+    private var pendingWatchAudioReplyTimeouts: [UInt64: Task<Void, Never>] = [:]
+    private var macAudioContiguousThrough: UInt64?
     private var voiceRelayReservation = WatchRemoteVoiceRelayReservation()
     private var activeVoiceIntent: WatchVoiceIntent = .foregroundDictation
     private var activeVoiceCodexTaskIdentity: WatchCodexTaskIdentity?
+    private var activeVoiceCodexConversationTarget: WatchCodexConversationTarget?
     private var liveStatusReplyTask: Task<Void, Never>?
     private var liveStatusRequestID: UUID?
     private var liveStatusReplyHandler: (([String: Any]) -> Void)?
@@ -202,6 +213,24 @@ final class WatchRelayController: NSObject, ObservableObject {
             }
             .store(in: &cancellables)
 
+        connection.$internetRelayProvisioningCleared
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.publishStatus() }
+            .store(in: &cancellables)
+
+        connection.$directBridgeConfiguration
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.publishStatus() }
+            .store(in: &cancellables)
+
+        connection.$directBridgeConfigurationCleared
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.publishStatus() }
+            .store(in: &cancellables)
+
         connection.$codexTaskSnapshot
             .receive(on: DispatchQueue.main)
             .sink { [weak self] snapshot in
@@ -213,6 +242,11 @@ final class WatchRelayController: NSObject, ObservableObject {
                 publishStatus()
                 transferCodexCompletionIfNeeded(snapshot)
             }
+            .store(in: &cancellables)
+
+        connection.$codexConversationCatalog
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.publishStatus() }
             .store(in: &cancellables)
 
         connection.$lastVoiceOutcome
@@ -547,7 +581,21 @@ final class WatchRelayController: NSObject, ObservableObject {
     }
 
     var internetRelayStatusDetail: String {
-        switch internetProfileSyncState {
+        Self.internetRelayStatusDetail(
+            relayEnabledForCurrentBuild:
+                WristInternetRelayConfiguration.isEnabledForCurrentBuild,
+            state: internetProfileSyncState
+        )
+    }
+
+    nonisolated static func internetRelayStatusDetail(
+        relayEnabledForCurrentBuild: Bool,
+        state: InternetProfileSyncState
+    ) -> String {
+        guard relayEnabledForCurrentBuild else {
+            return "当前构建已禁用并清除公网 Relay"
+        }
+        switch state {
         case .unavailable:
             return "等待 Mac 安全下发凭证"
         case .configured:
@@ -611,6 +659,32 @@ final class WatchRelayController: NSObject, ObservableObject {
             // cannot flow before the matching Mac session is ready.
             return false
 
+        case .voiceCancel:
+            guard let event = Self.validatedVoiceEvent(
+                from: message,
+                kind: .voiceCancel,
+                currentProfileRevision: actionProfileStore.revision,
+                acceptedProfileRevision: connection.acceptedWatchProfileRevision
+            ) else { return nil }
+            let matchesPending = voiceRelayReservation.pendingStreamID == event.streamID
+                && voiceRelayReservation.pendingProfileRevision == event.profileRevision
+            let matchesActive = audioStreamGate.activeStreamID == event.streamID
+                && audioStreamGate.activeProfileRevision == event.profileRevision
+                && event.intent == activeVoiceIntent
+                && event.codexTaskIdentity == activeVoiceCodexTaskIdentity
+                && event.codexConversationTarget == activeVoiceCodexConversationTarget
+            guard matchesPending || matchesActive else { return nil }
+            voiceRelayReservation.stop(
+                streamID: event.streamID,
+                profileRevision: event.profileRevision
+            )
+            failWatchAudioRelay(
+                streamID: event.streamID,
+                profileRevision: event.profileRevision,
+                detail: "本次录音已丢弃"
+            )
+            return nil
+
         case .voiceStop:
             guard let event = Self.validatedVoiceEvent(
                 from: message,
@@ -633,7 +707,8 @@ final class WatchRelayController: NSObject, ObservableObject {
                 return nil
             }
             guard event.intent == activeVoiceIntent,
-                  event.codexTaskIdentity == activeVoiceCodexTaskIdentity
+                  event.codexTaskIdentity == activeVoiceCodexTaskIdentity,
+                  event.codexConversationTarget == activeVoiceCodexConversationTarget
             else { return nil }
             requestVoiceStopAfterDrain(
                 streamID: event.streamID,
@@ -658,7 +733,18 @@ final class WatchRelayController: NSObject, ObservableObject {
             lastErrorText = "Codex 回复缺少确认通道，草稿未发送"
             return false
 
-        case .status, .codexTaskSnapshot, .voiceOutcome:
+        case .codexConversationCatalogRequest,
+             .codexConversationTargetSelect,
+             .codexConversationDraftSubmit:
+            lastErrorText = "Codex 会话操作缺少确认通道，未执行"
+            return false
+
+        case .status,
+             .codexTaskSnapshot,
+             .voiceOutcome,
+             .codexConversationCatalogSnapshot,
+             .codexConversationTargetResult,
+             .codexConversationDraftReceipt:
             return nil
         }
     }
@@ -689,6 +775,7 @@ final class WatchRelayController: NSObject, ObservableObject {
         profileRevision: Int,
         intent: WatchVoiceIntent,
         codexTaskIdentity: WatchCodexTaskIdentity?,
+        codexConversationTarget: WatchCodexConversationTarget?,
         finalSequence: UInt64?
     )? {
         guard let event = WatchRemoteProtocol.voiceEvent(from: message, kind: kind),
@@ -698,6 +785,37 @@ final class WatchRelayController: NSObject, ObservableObject {
         return event
     }
 
+    nonisolated static func acceptsVoiceDestination(
+        intent: WatchVoiceIntent,
+        codexTaskIdentity: WatchCodexTaskIdentity?,
+        codexConversationTarget: WatchCodexConversationTarget?,
+        currentTask: WatchCodexTaskSnapshot?,
+        catalog: WatchCodexConversationCatalog?,
+        continuingAcceptedRecording: Bool = false,
+        nowEpochMilliseconds: Int64 = Int64(Date().timeIntervalSince1970 * 1_000)
+    ) -> Bool {
+        switch intent {
+        case .foregroundDictation:
+            return codexTaskIdentity == nil && codexConversationTarget == nil
+        case .codexTask:
+            return codexConversationTarget == nil
+                && codexTaskIdentity == WatchCodexTaskIdentity(currentTask)
+        case .codexConversation:
+            guard codexTaskIdentity == nil,
+                  let target = codexConversationTarget,
+                  !target.isExpired(atEpochMilliseconds: nowEpochMilliseconds)
+            else { return false }
+            if continuingAcceptedRecording {
+                return catalog?.permitsContinuingVoice(
+                    for: target, nowEpochMilliseconds: nowEpochMilliseconds
+                ) == true
+            }
+            return catalog?.entries.contains(where: {
+                $0.target == target && $0.canAcceptInput
+            }) == true
+        }
+    }
+
     private func reserveVoiceStart(
         _ message: [String: Any],
         replyHandler: @escaping ([String: Any]) -> Void
@@ -705,7 +823,8 @@ final class WatchRelayController: NSObject, ObservableObject {
         streamID: UUID,
         profileRevision: Int,
         intent: WatchVoiceIntent,
-        codexTaskIdentity: WatchCodexTaskIdentity?
+        codexTaskIdentity: WatchCodexTaskIdentity?,
+        codexConversationTarget: WatchCodexConversationTarget?
     )? {
         guard protocolVersion(in: message) == WatchRemoteProtocol.version,
               WatchRemoteProtocol.kind(from: message) == .voiceStart,
@@ -715,10 +834,13 @@ final class WatchRelayController: NSObject, ObservableObject {
                   currentProfileRevision: actionProfileStore.revision,
                   acceptedProfileRevision: connection.acceptedWatchProfileRevision
               ),
-              (event.intent == .foregroundDictation
-                    || event.codexTaskIdentity == WatchCodexTaskIdentity(
-                        connection.codexTaskSnapshot
-                    ))
+              Self.acceptsVoiceDestination(
+                  intent: event.intent,
+                  codexTaskIdentity: event.codexTaskIdentity,
+                  codexConversationTarget: event.codexConversationTarget,
+                  currentTask: connection.codexTaskSnapshot,
+                  catalog: connection.codexConversationCatalog
+              )
         else {
             replyHandler(WatchRemoteProtocol.voiceStartReply(
                 accepted: false,
@@ -741,7 +863,8 @@ final class WatchRelayController: NSObject, ObservableObject {
                 streamID: event.streamID,
                 profileRevision: event.profileRevision,
                 intent: event.intent,
-                codexTaskIdentity: event.codexTaskIdentity
+                codexTaskIdentity: event.codexTaskIdentity,
+                codexConversationTarget: event.codexConversationTarget
             ) ?? [:])
             return nil
         }
@@ -749,7 +872,8 @@ final class WatchRelayController: NSObject, ObservableObject {
             event.streamID,
             event.profileRevision,
             event.intent,
-            event.codexTaskIdentity
+            event.codexTaskIdentity,
+            event.codexConversationTarget
         )
     }
 
@@ -758,6 +882,7 @@ final class WatchRelayController: NSObject, ObservableObject {
         profileRevision: Int,
         intent: WatchVoiceIntent,
         codexTaskIdentity: WatchCodexTaskIdentity?,
+        codexConversationTarget: WatchCodexConversationTarget?,
         replyHandler: @escaping ([String: Any]) -> Void
     ) async {
         guard voiceRelayReservation.pendingStreamID == streamID,
@@ -768,7 +893,8 @@ final class WatchRelayController: NSObject, ObservableObject {
                 streamID: streamID,
                 profileRevision: profileRevision,
                 intent: intent,
-                codexTaskIdentity: codexTaskIdentity
+                codexTaskIdentity: codexTaskIdentity,
+                codexConversationTarget: codexConversationTarget
             ) ?? [:])
             return
         }
@@ -777,7 +903,8 @@ final class WatchRelayController: NSObject, ObservableObject {
             sessionID: sessionID,
             profileRevision: profileRevision,
             intent: intent,
-            codexTaskIdentity: codexTaskIdentity
+            codexTaskIdentity: codexTaskIdentity,
+            codexConversationTarget: codexConversationTarget
         )
         let isStillPending = voiceRelayReservation.consumeCompletion(
             streamID: streamID,
@@ -789,18 +916,25 @@ final class WatchRelayController: NSObject, ObservableObject {
             && isWatchReachable
             && actionProfileStore.revision == profileRevision
             && connection.acceptedWatchProfileRevision == profileRevision
-            && (intent == .foregroundDictation
-                || codexTaskIdentity == WatchCodexTaskIdentity(
-                    connection.codexTaskSnapshot
-                ))
+            && Self.acceptsVoiceDestination(
+                intent: intent,
+                codexTaskIdentity: codexTaskIdentity,
+                codexConversationTarget: codexConversationTarget,
+                currentTask: connection.codexTaskSnapshot,
+                catalog: connection.codexConversationCatalog,
+                continuingAcceptedRecording: true
+            )
         if accepted {
             lastErrorText = nil
+            failPendingWatchAudioReplies()
+            macAudioContiguousThrough = nil
             audioStreamGate.start(
                 streamID: streamID,
                 profileRevision: profileRevision
             )
             activeVoiceIntent = intent
             activeVoiceCodexTaskIdentity = codexTaskIdentity
+            activeVoiceCodexConversationTarget = codexConversationTarget
             scheduleVoiceInactivityWatchdog(
                 streamID: streamID,
                 profileRevision: profileRevision
@@ -827,7 +961,8 @@ final class WatchRelayController: NSObject, ObservableObject {
             streamID: streamID,
             profileRevision: profileRevision,
             intent: intent,
-            codexTaskIdentity: codexTaskIdentity
+            codexTaskIdentity: codexTaskIdentity,
+            codexConversationTarget: codexConversationTarget
         ) ?? [:])
     }
 
@@ -891,54 +1026,169 @@ final class WatchRelayController: NSObject, ObservableObject {
         }
     }
 
-    private func handleAudioPacket(_ data: Data) -> Data? {
+    private func handleAudioPacket(
+        _ data: Data,
+        replyHandler: @escaping (Data) -> Void
+    ) {
         guard let envelope = WatchRemoteProtocol.audioEnvelope(from: data) else {
             lastErrorText = "收到无法解析的手表语音包"
             publishStatus()
-            return nil
+            replyHandler(Data())
+            return
         }
         guard isWatchReachable,
               connection.voiceOwner == .watch,
               envelope.profileRevision == actionProfileStore.revision,
               envelope.profileRevision == connection.acceptedWatchProfileRevision
         else {
-            return WatchRemoteProtocol.audioAckData(
+            replyHandler(WatchRemoteProtocol.audioAckData(
                 streamID: envelope.streamID,
                 profileRevision: envelope.profileRevision,
                 sequence: envelope.sequence,
                 accepted: false,
-                contiguousThrough: audioStreamGate.contiguousThrough
-            )
+                contiguousThrough: macAudioContiguousThrough
+            ) ?? Data())
+            return
         }
         let insertion = audioStreamGate.insert(envelope)
         guard insertion.accepted else {
-            return WatchRemoteProtocol.audioAckData(
+            replyHandler(WatchRemoteProtocol.audioAckData(
                 streamID: envelope.streamID,
                 profileRevision: envelope.profileRevision,
                 sequence: envelope.sequence,
                 accepted: false,
-                contiguousThrough: insertion.contiguousThrough
-            )
+                contiguousThrough: macAudioContiguousThrough
+            ) ?? Data())
+            return
         }
+        pendingWatchAudioReplies[envelope.sequence] = PendingWatchAudioReply(
+            streamID: envelope.streamID,
+            profileRevision: envelope.profileRevision,
+            sequence: envelope.sequence,
+            replyHandler: replyHandler
+        )
+        scheduleWatchAudioReplyTimeout(for: envelope)
         scheduleVoiceInactivityWatchdog(
             streamID: envelope.streamID,
             profileRevision: envelope.profileRevision
         )
         for readyEnvelope in insertion.readyEnvelopes {
-            connection.sendRelayedVoicePCM(
+            guard pendingWatchAudioReplies[readyEnvelope.sequence] != nil else { continue }
+            let started = connection.sendRelayedVoicePCM(
                 readyEnvelope.pcm16Data,
                 sessionID: readyEnvelope.streamID.uuidString,
-                profileRevision: readyEnvelope.profileRevision
+                profileRevision: readyEnvelope.profileRevision,
+                audioSequence: readyEnvelope.sequence
+            ) { [weak self] receipt in
+                self?.completeWatchAudioReply(receipt, envelope: readyEnvelope)
+            }
+            if !started {
+                completeWatchAudioReply(
+                    WristBridgeAudioDeliveryReceipt(
+                        sequence: readyEnvelope.sequence,
+                        accepted: false,
+                        contiguousThrough: macAudioContiguousThrough
+                    ),
+                    envelope: readyEnvelope
+                )
+            }
+        }
+    }
+
+    private func scheduleWatchAudioReplyTimeout(for envelope: WatchRemoteAudioEnvelope) {
+        pendingWatchAudioReplyTimeouts.removeValue(forKey: envelope.sequence)?.cancel()
+        pendingWatchAudioReplyTimeouts[envelope.sequence] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(
+                WristBridgeConnection.audioDeliveryTimeoutSeconds + 1
+            ))
+            guard let self,
+                  !Task.isCancelled,
+                  let pending = pendingWatchAudioReplies[envelope.sequence],
+                  pending.streamID == envelope.streamID,
+                  pending.profileRevision == envelope.profileRevision
+            else { return }
+            failWatchAudioRelay(
+                streamID: envelope.streamID,
+                profileRevision: envelope.profileRevision,
+                detail: "Mac 未确认语音分片，录音已取消"
             )
         }
-        finishPendingVoiceStopIfDrained()
-        return WatchRemoteProtocol.audioAckData(
+    }
+
+    private func completeWatchAudioReply(
+        _ receipt: WristBridgeAudioDeliveryReceipt,
+        envelope: WatchRemoteAudioEnvelope
+    ) {
+        guard receipt.sequence == envelope.sequence,
+              let pending = pendingWatchAudioReplies.removeValue(forKey: envelope.sequence),
+              pending.streamID == envelope.streamID,
+              pending.profileRevision == envelope.profileRevision
+        else { return }
+        pendingWatchAudioReplyTimeouts.removeValue(forKey: envelope.sequence)?.cancel()
+        if let contiguousThrough = receipt.contiguousThrough {
+            macAudioContiguousThrough = max(
+                macAudioContiguousThrough ?? contiguousThrough,
+                contiguousThrough
+            )
+        }
+        pending.replyHandler(WatchRemoteProtocol.audioAckData(
             streamID: envelope.streamID,
             profileRevision: envelope.profileRevision,
             sequence: envelope.sequence,
-            accepted: true,
-            contiguousThrough: insertion.contiguousThrough
+            accepted: receipt.accepted,
+            contiguousThrough: macAudioContiguousThrough
+        ) ?? Data())
+        guard receipt.accepted else {
+            failWatchAudioRelay(
+                streamID: envelope.streamID,
+                profileRevision: envelope.profileRevision,
+                detail: "Mac 拒绝了语音分片，录音已取消"
+            )
+            return
+        }
+        _ = finishPendingVoiceStopIfDrained()
+    }
+
+    private func failPendingWatchAudioReplies() {
+        let pending = pendingWatchAudioReplies
+        pendingWatchAudioReplies.removeAll()
+        pendingWatchAudioReplyTimeouts.values.forEach { $0.cancel() }
+        pendingWatchAudioReplyTimeouts.removeAll()
+        for (_, reply) in pending.sorted(by: { $0.key < $1.key }) {
+            reply.replyHandler(WatchRemoteProtocol.audioAckData(
+                streamID: reply.streamID,
+                profileRevision: reply.profileRevision,
+                sequence: reply.sequence,
+                accepted: false,
+                contiguousThrough: macAudioContiguousThrough
+            ) ?? Data())
+        }
+    }
+
+    private func failWatchAudioRelay(
+        streamID: UUID,
+        profileRevision: Int,
+        detail: String
+    ) {
+        failPendingWatchAudioReplies()
+        pendingVoiceStop = nil
+        voiceStopDrainTask?.cancel()
+        voiceStopDrainTask = nil
+        voiceInactivityWatchdog?.cancel()
+        voiceInactivityWatchdog = nil
+        _ = audioStreamGate.stop(
+            streamID: streamID,
+            profileRevision: profileRevision
         )
+        activeVoiceIntent = .foregroundDictation
+        activeVoiceCodexTaskIdentity = nil
+        activeVoiceCodexConversationTarget = nil
+        lastErrorText = detail
+        connection.cancelRelayedVoice(
+            sessionID: streamID.uuidString,
+            profileRevision: profileRevision
+        )
+        publishStatus()
     }
 
     private func requestVoiceStopAfterDrain(
@@ -965,7 +1215,7 @@ final class WatchRelayController: NSObject, ObservableObject {
     private func finishPendingVoiceStopIfDrained() -> Bool {
         guard let pendingVoiceStop else { return false }
         let isDrained = pendingVoiceStop.finalSequence == nil
-            || audioStreamGate.lastAcceptedSequence.map {
+            || macAudioContiguousThrough.map {
                 $0 >= pendingVoiceStop.finalSequence!
             } == true
             || audioStreamGate.activeStreamID == nil
@@ -979,7 +1229,7 @@ final class WatchRelayController: NSObject, ObservableObject {
         if !force,
            let finalSequence = stop.finalSequence,
            audioStreamGate.activeStreamID != nil,
-           (audioStreamGate.lastAcceptedSequence ?? 0) < finalSequence {
+           macAudioContiguousThrough.map({ $0 >= finalSequence }) != true {
             return
         }
         pendingVoiceStop = nil
@@ -994,14 +1244,24 @@ final class WatchRelayController: NSObject, ObservableObject {
             voiceInactivityWatchdog = nil
             activeVoiceIntent = .foregroundDictation
             activeVoiceCodexTaskIdentity = nil
+            activeVoiceCodexConversationTarget = nil
         }
         if let failureText {
             lastErrorText = failureText
         }
-        connection.endRelayedVoice(
-            sessionID: stop.streamID.uuidString,
-            profileRevision: stop.profileRevision
-        )
+        if force {
+            failPendingWatchAudioReplies()
+            connection.cancelRelayedVoice(
+                sessionID: stop.streamID.uuidString,
+                profileRevision: stop.profileRevision
+            )
+        } else {
+            connection.endRelayedVoice(
+                sessionID: stop.streamID.uuidString,
+                profileRevision: stop.profileRevision
+            )
+        }
+        macAudioContiguousThrough = nil
         publishStatus()
     }
 
@@ -1026,10 +1286,13 @@ final class WatchRelayController: NSObject, ObservableObject {
             ) else { return }
             activeVoiceIntent = .foregroundDictation
             activeVoiceCodexTaskIdentity = nil
-            connection.endRelayedVoice(
+            activeVoiceCodexConversationTarget = nil
+            failPendingWatchAudioReplies()
+            connection.cancelRelayedVoice(
                 sessionID: streamID.uuidString,
                 profileRevision: profileRevision
             )
+            macAudioContiguousThrough = nil
             publishStatus()
         }
     }
@@ -1044,6 +1307,7 @@ final class WatchRelayController: NSObject, ObservableObject {
         voiceStopDrainTask?.cancel()
         voiceStopDrainTask = nil
         pendingVoiceStop = nil
+        failPendingWatchAudioReplies()
         let activeVoiceStreamID = audioStreamGate.activeStreamID
         let activeVoiceProfileRevision = audioStreamGate.activeProfileRevision
         let pendingVoiceStreamID = voiceRelayReservation.pendingStreamID
@@ -1052,6 +1316,7 @@ final class WatchRelayController: NSObject, ObservableObject {
         voiceRelayReservation.clear()
         activeVoiceIntent = .foregroundDictation
         activeVoiceCodexTaskIdentity = nil
+        activeVoiceCodexConversationTarget = nil
 
         let commands = heldCommandRevisions
         heldCommandRevisions.removeAll()
@@ -1073,24 +1338,36 @@ final class WatchRelayController: NSObject, ObservableObject {
             },
         ].compactMap { $0 }
         for (streamID, revision) in streams {
-            connection.endRelayedVoice(
+            connection.cancelRelayedVoice(
                 sessionID: streamID.uuidString,
                 profileRevision: revision
             )
         }
+        macAudioContiguousThrough = nil
     }
 
     private func publishStatus() {
         guard let session, session.activationState == .activated else { return }
         let status = currentStatus
-        let context = WatchRemoteProtocol.applicationContext(
+        var context = WatchRemoteProtocol.applicationContext(
             status: status,
             favorites: layoutSettings.favorites,
             codexTask: connection.codexTaskSnapshot,
             codexTaskStateRevision: connection.codexTaskStateRevision,
             voiceOutcome: connection.lastVoiceOutcome,
-            internetRelayProvisioning: connection.internetRelayProvisioning
+            codexConversationCatalog: connection.codexConversationCatalog,
+            internetRelayProvisioning: connection.internetRelayProvisioning,
+            internetRelayProvisioningCleared: connection.internetRelayProvisioningCleared
         )
+        // The authenticated Mac provides only public discovery information.
+        // Watch creates and keeps its own signing identity in its own Keychain.
+        if let configuration = connection.directBridgeConfiguration,
+           let encoded = try? configuration.encodeBase64() {
+            context["wristDirectBridgeConfiguration"] = encoded
+            context["wristDirectBridgeConfigurationCleared"] = false
+        } else if connection.directBridgeConfigurationCleared {
+            context["wristDirectBridgeConfigurationCleared"] = true
+        }
         do {
             try session.updateApplicationContext(context)
         } catch {
@@ -1118,6 +1395,14 @@ final class WatchRelayController: NSObject, ObservableObject {
         if let outcome = connection.lastVoiceOutcome,
            let message = WatchRemoteProtocol.voiceOutcomeMessage(outcome) {
             session.sendMessage(message, replyHandler: nil, errorHandler: nil)
+        }
+        if let catalog = connection.codexConversationCatalog,
+           let message = WatchRemoteProtocol.codexConversationCatalogSnapshotMessage(catalog) {
+            session.sendMessage(
+                message,
+                replyHandler: nil,
+                errorHandler: nil
+            )
         }
     }
 
@@ -1218,7 +1503,7 @@ final class WatchRelayController: NSObject, ObservableObject {
             await connection.prepareForWatchStatusRequest()
             guard !Task.isCancelled else { return }
             let clock = ContinuousClock()
-            let deadline = clock.now + .milliseconds(4_500)
+            let deadline = clock.now + .milliseconds(Self.liveStatusRecoveryMilliseconds)
             while !Task.isCancelled,
                   !connection.isConnected,
                   clock.now < deadline {
@@ -1334,6 +1619,120 @@ extension WatchRelayController: WCSessionDelegate {
                     replyHandler: replyHandler
                 )
 
+            case .codexConversationCatalogRequest:
+                guard let requestID = WatchRemoteProtocol.codexConversationCatalogRequest(
+                    from: message
+                ) else {
+                    replyHandler([:])
+                    return
+                }
+                let started = self.connection.requestCodexConversationCatalog(
+                    requestID: requestID
+                ) { [weak self] receipt in
+                    guard let self else {
+                        replyHandler([:])
+                        return
+                    }
+                    self.lastErrorText = receipt.accepted ? nil : receipt.detail
+                    guard receipt.accepted,
+                          let catalog = receipt.catalog,
+                          let response = WatchRemoteProtocol
+                            .codexConversationCatalogSnapshotMessage(
+                                catalog,
+                                requestID: receipt.requestID
+                            )
+                    else {
+                        replyHandler([:])
+                        return
+                    }
+                    replyHandler(response)
+                }
+                guard started else {
+                    self.lastErrorText = "Mac 尚未提供 Codex 会话目录"
+                    replyHandler([:])
+                    return
+                }
+
+            case .codexConversationTargetSelect:
+                guard let selection = WatchRemoteProtocol.codexConversationTargetSelection(
+                    from: message
+                ) else {
+                    replyHandler([:])
+                    return
+                }
+                let started = self.connection.selectCodexConversationTarget(
+                    requestID: selection.requestID,
+                    target: selection.target
+                ) { [weak self] receipt in
+                    guard let self else {
+                        replyHandler([:])
+                        return
+                    }
+                    self.lastErrorText = receipt.accepted ? nil : receipt.detail
+                    replyHandler(
+                        WatchRemoteProtocol.codexConversationTargetResultMessage(
+                            requestID: receipt.requestID,
+                            accepted: receipt.accepted,
+                            selectedTarget: receipt.selectedTarget,
+                            detail: receipt.detail
+                        ) ?? [:]
+                    )
+                }
+                guard started else {
+                    self.lastErrorText = "Codex 会话已变化，请刷新后重选"
+                    replyHandler(
+                        WatchRemoteProtocol.codexConversationTargetResultMessage(
+                            requestID: selection.requestID,
+                            accepted: false,
+                            selectedTarget: nil,
+                            detail: "会话已变化，请刷新后重选"
+                        ) ?? [:]
+                    )
+                    return
+                }
+
+            case .codexConversationDraftSubmit:
+                guard let draft = WatchRemoteProtocol.codexConversationDraftSubmit(
+                    from: message
+                ) else {
+                    replyHandler([:])
+                    return
+                }
+                let started = self.connection.submitCodexConversationDraft(
+                    submissionID: draft.submissionID,
+                    draftID: draft.draftID,
+                    target: draft.target,
+                    transcript: draft.transcript
+                ) { [weak self] receipt in
+                    guard let self else {
+                        replyHandler([:])
+                        return
+                    }
+                    self.lastErrorText = receipt.accepted ? nil : receipt.detail
+                    replyHandler(
+                        WatchRemoteProtocol.codexConversationDraftReceiptMessage(
+                            accepted: receipt.accepted,
+                            submissionID: receipt.submissionID,
+                            draftID: receipt.draftID,
+                            resolvedTarget: receipt.resolvedTarget,
+                            detail: receipt.detail
+                        ) ?? [:]
+                    )
+                }
+                guard started else {
+                    self.lastErrorText = "Codex 草稿目标已变化，草稿未发送"
+                    replyHandler(
+                        WatchRemoteProtocol.codexConversationDraftReceiptMessage(
+                            accepted: false,
+                            submissionID: draft.submissionID,
+                            draftID: draft.draftID,
+                            resolvedTarget: nil,
+                            detail: "目标已变化，请刷新后重试"
+                        ) ?? [:]
+                    )
+                    return
+                }
+
             case .voiceStart:
                 // Reserve synchronously in this ordered main-queue callback.
                 // A following voiceStop can then cancel the exact stream even
@@ -1348,6 +1747,7 @@ extension WatchRelayController: WCSessionDelegate {
                         profileRevision: event.profileRevision,
                         intent: event.intent,
                         codexTaskIdentity: event.codexTaskIdentity,
+                        codexConversationTarget: event.codexConversationTarget,
                         replyHandler: replyHandler
                     )
                 }
@@ -1411,12 +1811,12 @@ extension WatchRelayController: WCSessionDelegate {
                 return
             }
             self.updateWatchProperties(from: session)
-            replyHandler(self.handleAudioPacket(messageData) ?? Data())
+            self.handleAudioPacket(messageData, replyHandler: replyHandler)
         }
     }
 }
 
-private extension WatchRemoteCommand {
+extension WatchRemoteCommand {
     var remoteCommand: WristBridgeCommand {
         switch self {
         case .power: return .power

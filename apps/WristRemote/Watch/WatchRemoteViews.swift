@@ -2,11 +2,7 @@ import SwiftUI
 import WatchKit
 
 extension Color {
-    static let wristRemoteAccent = Color(
-        red: 0,
-        green: 47.0 / 255.0,
-        blue: 167.0 / 255.0
-    )
+    static let wristRemoteAccent = Color.cyan
 }
 
 struct WatchRemoteRootView: View {
@@ -14,438 +10,14 @@ struct WatchRemoteRootView: View {
 
     var body: some View {
         NavigationStack {
-            CodexTaskHomeView(controller: controller)
-                .navigationTitle("")
+            WatchCodexConversationHomeView(controller: controller)
+                .navigationTitle("Codex")
                 .navigationBarTitleDisplayMode(.inline)
         }
         .background(Color.black.ignoresSafeArea())
     }
 }
 
-private struct CodexTaskHomeView: View {
-    @ObservedObject var controller: WatchSessionController
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                if !controller.isReady {
-                    CompactConnectionIssue(controller: controller)
-                } else {
-                    CompactConnectionPath(controller: controller)
-                }
-
-                if let task = controller.codexTaskSnapshot {
-                    CodexTaskSummary(task: task)
-                        .id("\(task.threadID)-\(task.revision)")
-                        .transition(
-                            reduceMotion
-                                ? .opacity
-                                : .move(edge: .bottom).combined(with: .opacity)
-                        )
-                } else {
-                    CodexTaskEmptyState()
-                }
-
-                if let draft = normalizedDraft {
-                    CodexReplyDraftView(
-                        draft: draft,
-                        isSubmitting: controller.isCodexReplySubmitting,
-                        submit: controller.submitCodexReply,
-                        discard: controller.discardCodexReply
-                    )
-                    .transition(
-                        reduceMotion
-                            ? .opacity
-                            : .move(edge: .bottom).combined(with: .opacity)
-                    )
-                } else {
-                    CodexVoiceInputView(controller: controller)
-                }
-
-                Divider()
-
-                NavigationLink {
-                    RemoteDeckView(controller: controller)
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "appletvremote.gen1.fill")
-                            .foregroundStyle(Color.wristRemoteAccent)
-                        Text("遥控器")
-                            .font(.body.weight(.semibold))
-                        Spacer(minLength: 4)
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityHint("打开独立的方向、功能和收藏遥控页面")
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-        }
-        .background(Color.black)
-        .animation(
-            reduceMotion ? nil : .easeInOut(duration: 0.18),
-            value: controller.codexTaskSnapshot?.revision
-        )
-        .animation(
-            reduceMotion ? nil : .easeInOut(duration: 0.18),
-            value: normalizedDraft
-        )
-    }
-
-    private var normalizedDraft: String? {
-        guard let draft = controller.codexReplyDraft?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-              !draft.isEmpty
-        else { return nil }
-        return draft
-    }
-}
-
-private struct CodexTaskSummary: View {
-    let task: WatchCodexTaskSnapshot
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Text("Codex")
-                    .font(.headline)
-                Spacer(minLength: 4)
-                stateLabel
-            }
-
-            Text(task.title)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel("当前任务：\(task.title)")
-
-            if task.state == .completed {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("结果摘要")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Text(completedSummary)
-                        .font(.footnote)
-                        .foregroundStyle(.primary)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            } else if task.state == .failed, let summary = normalizedSummary {
-                Text(summary)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-        }
-        .accessibilityElement(children: .contain)
-    }
-
-    @ViewBuilder
-    private var stateLabel: some View {
-        switch task.state {
-        case .running:
-            HStack(spacing: 4) {
-                ProgressView()
-                    .controlSize(.mini)
-                    .tint(Color.wristRemoteAccent)
-                Text("执行中")
-            }
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(Color.wristRemoteAccent)
-            .accessibilityElement(children: .combine)
-        case .completed:
-            Label("已完成", systemImage: "checkmark.circle.fill")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color.wristRemoteAccent)
-        case .failed:
-            Label("未完成", systemImage: "exclamationmark.circle.fill")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var normalizedSummary: String? {
-        guard let summary = task.summary?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-              !summary.isEmpty
-        else { return nil }
-        return summary
-    }
-
-    private var completedSummary: String {
-        normalizedSummary ?? "任务已完成，摘要正在同步。"
-    }
-}
-
-private struct CodexTaskEmptyState: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Codex")
-                .font(.headline)
-            Text("等待当前任务")
-                .font(.body.weight(.semibold))
-            Text("Mac 上开始执行后，任务和结果会在这里同步。")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .accessibilityElement(children: .combine)
-    }
-}
-
-private struct CodexVoiceInputView: View {
-    @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @ObservedObject var controller: WatchSessionController
-    @State private var gestureInProgress = false
-    @State private var gestureCancelled = false
-    @State private var didBeginVoice = false
-    @State private var holdTask: Task<Void, Never>?
-
-    private let holdDelayMilliseconds = 180
-    private let movementTolerance: CGFloat = 18
-
-    var body: some View {
-        VStack(spacing: 8) {
-            ZStack {
-                Circle()
-                    .fill(Color.wristRemoteAccent)
-                    .frame(width: 58, height: 58)
-                Image(systemName: microphoneSymbol)
-                    .font(.system(size: 23, weight: .semibold))
-                    .foregroundStyle(.white)
-            }
-            .scaleEffect(
-                !reduceMotion && (gestureInProgress || controller.isCodexVoiceRecording)
-                    ? 0.94 : 1
-            )
-            .animation(
-                reduceMotion ? nil : .easeOut(duration: 0.12),
-                value: gestureInProgress
-            )
-            .contentShape(Circle())
-            .simultaneousGesture(holdGesture)
-            .allowsHitTesting(
-                controller.canStartCodexVoice || controller.isCodexVoiceInteractionInProgress
-            )
-            .opacity(
-                controller.canStartCodexVoice || controller.isCodexVoiceInteractionInProgress
-                    ? 1 : 0.42
-            )
-            .accessibilityAddTraits(.isButton)
-            .accessibilityLabel("Codex 中文语音")
-            .accessibilityValue(controller.isCodexVoiceRecording ? "正在录音" : voiceStatusText)
-            .accessibilityHint("按住并等待震动后说中文，松开生成草稿")
-            .accessibilityAction {
-                controller.isCodexVoiceInteractionInProgress ? endVoice() : beginVoice()
-            }
-            .accessibilityAction(named: Text("开始中文语音")) {
-                beginVoice()
-            }
-            .accessibilityAction(named: Text("结束中文语音")) {
-                endVoice()
-            }
-
-            Text(visibleStatusText)
-                .font(.footnote)
-                .foregroundStyle(
-                    controller.isCodexVoiceRecording ? Color.wristRemoteAccent : Color.secondary
-                )
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-                .frame(maxWidth: .infinity)
-        }
-        .frame(maxWidth: .infinity)
-        .onDisappear {
-            cancelGesture()
-            controller.cancelCodexVoiceGesture()
-        }
-        .onChange(of: scenePhase) { _, newPhase in
-            guard newPhase != .active else { return }
-            cancelGesture()
-            controller.cancelCodexVoiceGesture()
-        }
-    }
-
-    private var microphoneSymbol: String {
-        if controller.isCodexVoiceRecording { return "waveform" }
-        if controller.isCodexVoicePreparing { return "ellipsis" }
-        return "mic.fill"
-    }
-
-    private var visibleStatusText: String {
-        if controller.isCodexVoiceRecording { return "正在听中文…" }
-        if controller.isCodexVoicePreparing { return "正在准备麦克风…" }
-        return voiceStatusText
-    }
-
-    private var voiceStatusText: String {
-        if let status = controller.codexVoiceStatusText?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !status.isEmpty {
-            return status
-        }
-        return "按住，震动后说中文"
-    }
-
-    private var holdGesture: some Gesture {
-        DragGesture(minimumDistance: 0)
-            .onChanged { value in
-                guard controller.canStartCodexVoice || gestureInProgress else { return }
-                if !gestureInProgress {
-                    gestureInProgress = true
-                    gestureCancelled = false
-                    didBeginVoice = false
-                    holdTask?.cancel()
-                    holdTask = Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(holdDelayMilliseconds))
-                        guard !Task.isCancelled,
-                              gestureInProgress,
-                              !gestureCancelled,
-                              controller.canStartCodexVoice
-                        else { return }
-                        didBeginVoice = true
-                        controller.setCodexVoicePressed(true)
-                    }
-                }
-                let distance = hypot(value.translation.width, value.translation.height)
-                if distance > movementTolerance {
-                    gestureCancelled = true
-                    holdTask?.cancel()
-                    holdTask = nil
-                    if didBeginVoice { controller.cancelCodexVoiceGesture() }
-                }
-            }
-            .onEnded { _ in
-                holdTask?.cancel()
-                holdTask = nil
-                if didBeginVoice, !gestureCancelled {
-                    controller.setCodexVoicePressed(false)
-                }
-                resetGestureState()
-            }
-    }
-
-    private func beginVoice() {
-        guard controller.canStartCodexVoice else { return }
-        controller.setCodexVoicePressed(true)
-    }
-
-    private func endVoice() {
-        controller.setCodexVoicePressed(false)
-    }
-
-    private func cancelGesture() {
-        holdTask?.cancel()
-        holdTask = nil
-        if didBeginVoice { controller.cancelCodexVoiceGesture() }
-        resetGestureState()
-    }
-
-    private func resetGestureState() {
-        gestureInProgress = false
-        gestureCancelled = false
-        didBeginVoice = false
-    }
-}
-
-private struct CodexReplyDraftView: View {
-    let draft: String
-    let isSubmitting: Bool
-    let submit: () -> Void
-    let discard: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("发送前确认")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-            Text(draft)
-                .font(.footnote)
-                .lineLimit(3)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel("语音草稿：\(draft)")
-
-            HStack(spacing: 8) {
-                Button(action: discard) {
-                    Label("重说", systemImage: "xmark")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .tint(Color.secondary)
-                .disabled(isSubmitting)
-
-                Button(action: submit) {
-                    Label("发送", systemImage: "arrow.up")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(isSubmitting)
-            }
-        }
-    }
-}
-
-private struct CompactConnectionIssue: View {
-    @ObservedObject var controller: WatchSessionController
-
-    var body: some View {
-        Button {
-            controller.requestStatus()
-        } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.circle")
-                        .foregroundStyle(.secondary)
-                    Text(controller.statusText)
-                        .font(.system(size: 12, weight: .semibold))
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-                Text(controller.statusDetail)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("连接状态：\(controller.statusText)")
-        .accessibilityValue(controller.statusDetail)
-        .accessibilityHint("轻点刷新连接状态")
-    }
-}
-
-private struct CompactConnectionPath: View {
-    @ObservedObject var controller: WatchSessionController
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(Color.green)
-                .frame(width: 5, height: 5)
-            Text(controller.statusText)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Spacer(minLength: 0)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("当前连接：\(controller.statusText)")
-    }
-}
 
 private enum RemoteDeckPage: Int, CaseIterable, Identifiable {
     case direction
@@ -471,30 +43,13 @@ private enum RemoteDeckPage: Int, CaseIterable, Identifiable {
     }
 }
 
-private struct RemoteDeckView: View {
+struct RemoteDeckView: View {
     @ObservedObject var controller: WatchSessionController
     @State private var selectedPage = RemoteDeckPage.direction
 
     var body: some View {
-        VStack(spacing: 6) {
-            if !controller.isReady {
-                CompactConnectionIssue(controller: controller)
-            }
-
-            // Page selection is explicit so a swipe that begins on a remote
-            // button can never also become a remote press.
-            Group {
-                switch selectedPage {
-                case .direction:
-                    DirectionRemotePage(controller: controller)
-                case .controls:
-                    FunctionRemotePage(controller: controller)
-                case .favorites:
-                    FavoritesRemotePage(controller: controller)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
+        selectedRemotePage
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black)
         .navigationTitle(selectedPage.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -510,6 +65,31 @@ private struct RemoteDeckView: View {
                 .accessibilityValue(selectedPage.title)
                 .accessibilityHint("选择方向、功能或收藏页面，不会触发遥控按键")
             }
+            ToolbarItem(placement: .bottomBar) {
+                NavigationLink {
+                    WatchDirectConnectionView(controller: controller)
+                } label: {
+                    Label(controller.remoteConnectionPathText, systemImage: "link")
+                }
+                .accessibilityIdentifier("remote-connection-settings")
+                .accessibilityLabel("连接状态：\(controller.remoteConnectionPathText)")
+                .accessibilityValue(controller.directButtonOutcome ?? controller.statusDetail)
+                .accessibilityHint("查看连接与执行结果，或重新连接；不会触发遥控动作")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var selectedRemotePage: some View {
+        // Page selection remains explicit so a swipe that begins on a remote
+        // button can never also become a remote press.
+        switch selectedPage {
+        case .direction:
+            DirectionRemotePage(controller: controller)
+        case .controls:
+            FunctionRemotePage(controller: controller)
+        case .favorites:
+            FavoritesRemotePage(controller: controller)
         }
     }
 }
@@ -540,7 +120,6 @@ private struct RemoteDeckPageSelectionView: View {
             }
             .accessibilityLabel("\(page.title)页")
         }
-        .navigationTitle("选择页面")
     }
 }
 
@@ -597,7 +176,7 @@ private struct DirectionButton: View {
                     .font(.system(size: isConfirm ? 17 : 19, weight: .semibold))
                 if let title = controller.title(for: command) {
                     Text(title)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.caption.weight(.medium))
                         .lineLimit(1)
                 }
             }
@@ -693,7 +272,7 @@ private struct VoiceRemoteButton: View {
                 Image(systemName: controller.isVoiceActive ? "waveform" : "mic.fill")
                     .font(.system(size: 17, weight: .semibold))
                 Text(controller.isVoiceActive ? "正在说话" : "语音")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.caption.weight(.semibold))
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -744,11 +323,11 @@ private struct FavoritesRemotePage: View {
                 FavoriteEditorView(controller: controller)
             } label: {
                 Label("收藏与手感", systemImage: "slider.horizontal.3")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.caption.weight(.semibold))
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(.bordered)
-            .accessibilityHint("调整四个收藏按钮与按键震动")
+            .accessibilityHint("调整四个收藏按钮与遥控、语音和会话的触觉反馈")
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("收藏键")
@@ -768,25 +347,29 @@ private struct FavoriteEditorView: View {
                     } label: {
                         HStack {
                             Text("位置 \(index + 1)")
-                                .font(.system(size: 12))
+                                .font(.caption)
                             Spacer()
                             Label(command.accessibilityTitle, systemImage: command.systemImage)
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.caption.weight(.semibold))
                         }
                     }
                 }
             }
 
             Section("手感") {
-                Toggle("按键震动", isOn: $hapticsEnabled)
-                    .font(.system(size: 12, weight: .semibold))
+                Toggle("触觉反馈", isOn: $hapticsEnabled)
+                    .font(.caption.weight(.semibold))
                     .onChange(of: hapticsEnabled) { oldValue, newValue in
                         guard !oldValue, newValue else { return }
                         WatchHaptics.play(.click)
                     }
+
+                Text("用于遥控按键、语音与会话操作")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .navigationTitle("收藏与手感")
     }
 }
 
@@ -804,7 +387,7 @@ private struct FavoriteCommandSelectionView: View {
             } label: {
                 HStack {
                     Label(command.accessibilityTitle, systemImage: command.systemImage)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.caption.weight(.medium))
                     Spacer()
                     if controller.favorites[index] == command {
                         Image(systemName: "checkmark")
@@ -828,7 +411,7 @@ private struct RemoteButtonLabel: View {
             Image(systemName: command.systemImage)
                 .font(.system(size: 17, weight: .semibold))
             Text(customTitle ?? command.shortTitle)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.caption.weight(.semibold))
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

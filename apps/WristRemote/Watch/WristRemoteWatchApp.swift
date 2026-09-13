@@ -9,6 +9,14 @@ struct WristRemoteWatchApp: App {
         WindowGroup {
             WatchRemoteRootView(controller: controller)
                 .tint(.wristRemoteAccent)
+                #if DEBUG && targetEnvironment(simulator)
+                .transformEnvironment(\.dynamicTypeSize) { size in
+                    if ProcessInfo.processInfo.arguments.contains("--presentation-fixture"),
+                       ProcessInfo.processInfo.arguments.contains("--large-type-fixture") {
+                        size = .xxxLarge
+                    }
+                }
+                #endif
                 .preferredColorScheme(.dark)
                 .task {
                     controller.start()

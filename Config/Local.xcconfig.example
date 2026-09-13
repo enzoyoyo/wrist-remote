@@ -3,8 +3,22 @@
 WRISTREMOTE_BUNDLE_PREFIX = org.example.wristremote
 WRISTREMOTE_DEVELOPMENT_TEAM = REPLACE_WITH_YOUR_TEAM_ID
 
-// Keep the .invalid value for LAN-only use. For Internet relay support,
-// replace it with the HTTPS URL printed by scripts/deploy-relay.sh.
+// Optional. Set both values only for a reviewed in-place upgrade of an
+// existing iPhone/Watch installation. They must exactly match the installed
+// apps and must remain on the same Apple Developer Team.
+// WRISTREMOTE_IOS_BUNDLE_IDENTIFIER = org.example.wristremote.ios
+// WRISTREMOTE_WATCH_BUNDLE_IDENTIFIER = org.example.wristremote.ios.watchkitapp
+// WRISTREMOTE_EXISTING_INSTALL_REQUIRED = YES
+// WRISTREMOTE_EXISTING_INSTALL_TEAM_ID = REPLACE_WITH_ORIGINAL_TEAM_ID
+
+// Optional. Set this only when performing a reviewed in-place upgrade of an
+// existing Mac Bridge whose Bundle identifier does not follow the prefix.
+// WRISTREMOTE_BRIDGE_BUNDLE_IDENTIFIER = org.example.wristremote.bridge
+
+// Private-only is the safe default for LAN/Tailscale use. A separately
+// reviewed public-relay build must set this to NO and replace the .invalid URL
+// with the HTTPS URL printed by scripts/deploy-relay.sh.
+WRISTREMOTE_PRIVATE_ONLY = YES
 WRISTREMOTE_RELAY_BASE_URL = https:/$()/relay.example.invalid
 
 // Optional. Leave blank to use safe automatic discovery.

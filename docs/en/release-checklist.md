@@ -42,7 +42,7 @@ Unclear license or provenance blocks release even while the repository is privat
 - [ ] Both languages have the same files, protocol versions, commands, limits, and risk disclosures.
 - [ ] All internal links resolve.
 - [ ] Installation documents state that Apple sign-in, trust, Developer Mode, and permission prompts require user action.
-- [ ] Relay documents state per-developer self-hosting, outbound-only Mac Internet transport, and Cloudflare-visible metadata.
+- [ ] Private-only documents require `WRISTREMOTE_PRIVATE_ONLY = YES`, an `.invalid` Relay endpoint, literal official-range Tailscale IPs, and no Funnel, public listener, or public fallback. Relay-development documents are clearly outside that active build boundary.
 - [ ] Documentation contains no real configuration, path, screenshot, or historical acceptance claim.
 
 ## 5. Automated verification
@@ -66,15 +66,19 @@ git status --short
 ## 6. Device and runtime acceptance
 
 - [ ] A fresh install signs, installs, and launches with the developer's own Team.
+- [ ] A controlled upgrade uses both verified exact mobile Bundle IDs; `--dry-run` confirms the current Team, historical profile identities (newly built profiles must be unexpired), and live identities on both devices, while the Bridge Bundle ID remains unchanged.
 - [ ] First-use six-digit pairing and rejection both behave correctly.
 - [ ] Single, double, and long press are verified for all 12 buttons.
 - [ ] Favorites, custom shortcuts, and custom application profile synchronization work.
 - [ ] Haptic toggle, press/cancel gesture, and Reduce Motion behavior are correct.
 - [ ] Chinese foreground dictation completes recording and final recognition, then immediately injects into the focused input.
 - [ ] The previous pasteboard contents are restored approximately 450 ms after foreground injection; if the pasteboard changes in that interval, the bridge preserves the new contents instead of overwriting them.
-- [ ] Codex completed task, summary, confirmed voice, submission, and receipt complete; a task change rejects an old reply.
-- [ ] LAN preference, Internet failover, offline Mac, connectivity recovery, and LAN recovery match documentation.
-- [ ] Buttons pressed offline are not executed after reconnect.
+- [ ] Codex conversation listing, search, destination selection, and independent new-task creation work; `thread/start` contains no parent/fork relationship, the result becomes an existing target, and voice remains disabled until then.
+- [ ] Held Codex voice sends original Watch PCM; the Mac creates an owner-only temporary WAV, uses the signed-in Codex account for first-party online transcription, revalidates the exact target, and queues text through local app-server. No macOS Speech or clipboard is used; temporary audio is deleted after processing, cancellation, or stream disconnect.
+- [ ] During one live audio stream, each packet advances only after Mac acknowledgement. A missing acknowledgement or disconnect fails closed, deletes partial audio, and never replays it automatically; the user must record again.
+- [ ] With `WRISTREMOTE_PRIVATE_ONLY = YES` and the relay URL set to `.invalid`, the Mac, iPhone, and Watch remove historical relay credentials; revocation survives a restart and an uninstall/reinstall that retains Keychain items, and packet capture or system network state confirms that no request reaches an old public endpoint.
+- [ ] LAN preference, official-IP-only Tailscale failover, offline Mac, connectivity recovery, and LAN recovery match documentation; DNS, Funnel, public IP, and public fallback are rejected.
+- [ ] Buttons pressed offline and partial voice streams are not executed or replayed after reconnect.
 - [ ] Reconnect after app and Mac restart is verified.
 - [ ] No unrelated application or input-device configuration is read, replaced, or intercepted.
 

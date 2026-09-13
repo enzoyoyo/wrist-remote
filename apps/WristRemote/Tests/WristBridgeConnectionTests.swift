@@ -1,4 +1,5 @@
 #if os(iOS)
+import CryptoKit
 import Security
 import XCTest
 @testable import WristRemote
@@ -12,8 +13,16 @@ final class WristBridgeConnectionTests: XCTestCase {
             "WristRemoteBridge nearby session"
         )
         XCTAssertEqual(
-            WristBridgeWireMessage.identityProofDomain,
-            "WristRemoteBridge nearby identity v1"
+            WristBridgeWireMessage.serverIdentityProofDomain,
+            "WristRemoteBridge server identity v1"
+        )
+        XCTAssertEqual(
+            WristBridgeWireMessage.clientAuthenticationProofDomain,
+            "WristRemoteBridge client auth v1"
+        )
+        XCTAssertEqual(
+            WristBridgeWireMessage.secureEnvelopeDomain,
+            "WristRemoteBridge secure envelope v1"
         )
         XCTAssertFalse(WristBridgeWireMessage.sessionSalt.contains("Unrelated nearby"))
     }
@@ -37,6 +46,25 @@ final class WristBridgeConnectionTests: XCTestCase {
             WristBridgeWireMessage.voiceOutcomesCapability,
             WristBridgeWireMessage.codexReplyReceiptsCapability,
             WristBridgeWireMessage.connectionLivenessCapability,
+            WristBridgeWireMessage.serverIdentityCapability,
+            WristBridgeWireMessage.secureSequenceCapability,
+            WristBridgeWireMessage.audioDeliveryReceiptsCapability,
+        ]))
+        XCTAssertFalse(WristBridgeConnection.acceptsCapabilities([
+            WristBridgeWireMessage.voiceSessionsCapability,
+            WristBridgeWireMessage.watchActionProfileCapability,
+            WristBridgeWireMessage.codexTasksCapability,
+            WristBridgeWireMessage.voiceOutcomesCapability,
+            WristBridgeWireMessage.codexReplyReceiptsCapability,
+            WristBridgeWireMessage.connectionLivenessCapability,
+            WristBridgeWireMessage.serverIdentityCapability,
+        ]))
+        XCTAssertFalse(WristBridgeConnection.supportsCodexConversationCapability([
+            WristBridgeWireMessage.voiceSessionsCapability,
+            WristBridgeWireMessage.watchActionProfileCapability,
+        ]))
+        XCTAssertTrue(WristBridgeConnection.supportsCodexConversationCapability([
+            WristBridgeWireMessage.codexConversationsCapability,
         ]))
         XCTAssertFalse(WristBridgeConnection.acceptsCapabilities([
             WristBridgeWireMessage.voiceSessionsCapability,
@@ -50,6 +78,239 @@ final class WristBridgeConnectionTests: XCTestCase {
             WristBridgeWireMessage.watchActionProfileCapability,
             WristBridgeWireMessage.voiceOutcomesCapability,
         ]))
+
+        XCTAssertTrue(WristBridgeConnection.acceptsSecureMessageBeforeReady("ready"))
+        XCTAssertTrue(WristBridgeConnection.acceptsSecureMessageBeforeReady("denied"))
+        XCTAssertFalse(WristBridgeConnection.acceptsSecureMessageBeforeReady("error"))
+        XCTAssertFalse(WristBridgeConnection.acceptsSecureMessageBeforeReady("watchProfileReady"))
+    }
+
+    func testRelayProvisioningCannotSilentlyRetainLegacyCredentials() {
+        let encoded = "encoded-provisioning"
+        XCTAssertEqual(
+            WristBridgeWireMessage.internetRelayProvisioningDirective(
+                encoded: encoded,
+                cleared: false
+            ),
+            .install(encoded)
+        )
+        XCTAssertEqual(
+            WristBridgeWireMessage.internetRelayProvisioningDirective(
+                encoded: nil,
+                cleared: true
+            ),
+            .clear
+        )
+        XCTAssertNil(WristBridgeWireMessage.internetRelayProvisioningDirective(
+            encoded: encoded,
+            cleared: true
+        ))
+        XCTAssertNil(WristBridgeWireMessage.internetRelayProvisioningDirective(
+            encoded: nil,
+            cleared: nil
+        ))
+
+        XCTAssertTrue(WristBridgeConnection.permitsInternetRelayKeychainRecovery(
+            relayEnabledForCurrentBuild: true,
+            privateNetworkEnabled: false,
+            explicitlyCleared: false
+        ))
+        XCTAssertFalse(WristBridgeConnection.permitsInternetRelayKeychainRecovery(
+            relayEnabledForCurrentBuild: true,
+            privateNetworkEnabled: true,
+            explicitlyCleared: false
+        ))
+        XCTAssertFalse(WristBridgeConnection.permitsInternetRelayKeychainRecovery(
+            relayEnabledForCurrentBuild: true,
+            privateNetworkEnabled: false,
+            explicitlyCleared: true
+        ))
+        XCTAssertFalse(WristBridgeConnection.permitsInternetRelayKeychainRecovery(
+            relayEnabledForCurrentBuild: false,
+            privateNetworkEnabled: false,
+            explicitlyCleared: false
+        ))
+        XCTAssertEqual(
+            WatchRelayController.internetRelayStatusDetail(
+                relayEnabledForCurrentBuild: false,
+                state: .unavailable
+            ),
+            "当前构建已禁用并清除公网 Relay"
+        )
+    }
+
+    func testRelayClearMarkerPersistsUntilExplicitlyRemoved() throws {
+        let suiteName = "WristBridgeConnectionTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        var keychainCleared = false
+        let updateKeychain: (Bool) -> Bool = { cleared in
+            keychainCleared = cleared
+            return true
+        }
+
+        XCTAssertFalse(WristInternetRelayClearMarker.isSet(
+            defaults: defaults,
+            keychainCleared: keychainCleared
+        ))
+        XCTAssertFalse(WristInternetRelayClearMarker.setCleared(
+            true,
+            defaults: defaults,
+            updateKeychain: { _ in false }
+        ))
+        XCTAssertTrue(WristInternetRelayClearMarker.isSet(
+            defaults: defaults,
+            keychainCleared: false
+        ))
+        defaults.removePersistentDomain(forName: suiteName)
+
+        XCTAssertTrue(WristInternetRelayClearMarker.setCleared(
+            true,
+            defaults: defaults,
+            updateKeychain: updateKeychain
+        ))
+        XCTAssertTrue(WristInternetRelayClearMarker.isSet(
+            defaults: try XCTUnwrap(UserDefaults(suiteName: suiteName)),
+            keychainCleared: keychainCleared
+        ))
+
+        defaults.removePersistentDomain(forName: suiteName)
+        XCTAssertTrue(WristInternetRelayClearMarker.isSet(
+            defaults: try XCTUnwrap(UserDefaults(suiteName: suiteName)),
+            keychainCleared: keychainCleared
+        ))
+        XCTAssertTrue(WristInternetRelayClearMarker.setCleared(
+            true,
+            defaults: defaults,
+            updateKeychain: updateKeychain
+        ))
+
+        XCTAssertFalse(WristInternetRelayClearMarker.setCleared(
+            false,
+            defaults: defaults,
+            updateKeychain: { _ in false }
+        ))
+        XCTAssertTrue(keychainCleared)
+        XCTAssertTrue(WristInternetRelayClearMarker.isSet(
+            defaults: defaults,
+            keychainCleared: false
+        ))
+
+        XCTAssertTrue(WristInternetRelayClearMarker.setCleared(
+            false,
+            defaults: defaults,
+            updateKeychain: updateKeychain
+        ))
+        XCTAssertFalse(WristInternetRelayClearMarker.isSet(
+            defaults: try XCTUnwrap(UserDefaults(suiteName: suiteName)),
+            keychainCleared: keychainCleared
+        ))
+    }
+
+    func testServerKeyRequiresExactVersionRolesAndIdentityProofFields() {
+        let valid = WristBridgeWireMessage(
+            type: "serverKey",
+            protocolID: WristBridgeWireMessage.protocolID,
+            serverRole: WristBridgeWireMessage.serverRole,
+            publicKey: Data(repeating: 1, count: 32).base64EncodedString(),
+            serverIdentityVersion: WristBridgeWireMessage.serverIdentityVersion,
+            serverIdentityPublicKey: Data(repeating: 2, count: 64).base64EncodedString(),
+            serverIdentitySignature: Data(repeating: 3, count: 64).base64EncodedString()
+        )
+        XCTAssertTrue(WristBridgeConnection.acceptsServerKey(valid))
+
+        var unknownVersion = valid
+        unknownVersion.serverIdentityVersion = 2
+        XCTAssertFalse(WristBridgeConnection.acceptsServerKey(unknownVersion))
+
+        var wrongRole = valid
+        wrongRole.clientRole = WristBridgeWireMessage.clientRole
+        XCTAssertFalse(WristBridgeConnection.acceptsServerKey(wrongRole))
+
+        var leakedClientIdentity = valid
+        leakedClientIdentity.identityPublicKey = "unexpected"
+        XCTAssertFalse(WristBridgeConnection.acceptsServerKey(leakedClientIdentity))
+    }
+
+    func testServerAndClientProofsAreDomainSeparatedAndBindTranscript() throws {
+        let clientEphemeral = Data(repeating: 1, count: 32)
+        let serverEphemeral = Data(repeating: 2, count: 32)
+        let serverIdentity = P256.Signing.PrivateKey()
+        let clientIdentity = P256.Signing.PrivateKey()
+
+        let serverProof = try XCTUnwrap(WristBridgeWireMessage.serverIdentityProof(
+            clientEphemeralPublicKey: clientEphemeral,
+            serverEphemeralPublicKey: serverEphemeral
+        ))
+        let serverSignature = try serverIdentity.signature(for: serverProof)
+        XCTAssertTrue(serverIdentity.publicKey.isValidSignature(serverSignature, for: serverProof))
+        let swappedServerProof = try XCTUnwrap(WristBridgeWireMessage.serverIdentityProof(
+            clientEphemeralPublicKey: serverEphemeral,
+            serverEphemeralPublicKey: clientEphemeral
+        ))
+        XCTAssertFalse(
+            serverIdentity.publicKey.isValidSignature(serverSignature, for: swappedServerProof)
+        )
+
+        let clientProof = try XCTUnwrap(WristBridgeWireMessage.clientAuthenticationProof(
+            clientEphemeralPublicKey: clientEphemeral,
+            serverEphemeralPublicKey: serverEphemeral,
+            serverIdentityPublicKey: serverIdentity.publicKey.rawRepresentation,
+            clientIdentityPublicKey: clientIdentity.publicKey.rawRepresentation
+        ))
+        XCTAssertNotEqual(serverProof, clientProof)
+        let clientSignature = try clientIdentity.signature(for: clientProof)
+        XCTAssertTrue(clientIdentity.publicKey.isValidSignature(clientSignature, for: clientProof))
+
+        let otherClientIdentity = P256.Signing.PrivateKey()
+        let changedClientProof = try XCTUnwrap(WristBridgeWireMessage.clientAuthenticationProof(
+            clientEphemeralPublicKey: clientEphemeral,
+            serverEphemeralPublicKey: serverEphemeral,
+            serverIdentityPublicKey: serverIdentity.publicKey.rawRepresentation,
+            clientIdentityPublicKey: otherClientIdentity.publicKey.rawRepresentation
+        ))
+        XCTAssertFalse(
+            clientIdentity.publicKey.isValidSignature(clientSignature, for: changedClientProof)
+        )
+    }
+
+    func testServerTrustIsTOFUAndPinnedMismatchFailsClosed() {
+        let fingerprint = String(repeating: "a", count: 64)
+        XCTAssertEqual(
+            WristBridgeConnection.serverTrustDecision(
+                storedFingerprint: nil,
+                storeAvailable: true,
+                presentedFingerprint: fingerprint
+            ),
+            .requiresApproval
+        )
+        XCTAssertEqual(
+            WristBridgeConnection.serverTrustDecision(
+                storedFingerprint: fingerprint,
+                storeAvailable: true,
+                presentedFingerprint: fingerprint
+            ),
+            .trusted
+        )
+        XCTAssertEqual(
+            WristBridgeConnection.serverTrustDecision(
+                storedFingerprint: String(repeating: "b", count: 64),
+                storeAvailable: true,
+                presentedFingerprint: fingerprint
+            ),
+            .mismatch
+        )
+        XCTAssertEqual(
+            WristBridgeConnection.serverTrustDecision(
+                storedFingerprint: nil,
+                storeAvailable: false,
+                presentedFingerprint: fingerprint
+            ),
+            .storageUnavailable
+        )
+        XCTAssertTrue(WristBridgeTrustedServerIdentityStore.isValidFingerprint(fingerprint))
+        XCTAssertFalse(WristBridgeTrustedServerIdentityStore.isValidFingerprint(fingerprint.uppercased()))
+        XCTAssertFalse(WristBridgeTrustedServerIdentityStore.isValidFingerprint("abc"))
     }
 
     func testWatchProfileUpdateCarriesExactRevisionAndSource() throws {
@@ -85,12 +346,14 @@ final class WristBridgeConnectionTests: XCTestCase {
             type: "audio",
             sessionID: sessionID,
             profileRevision: 8,
-            samples: Data([0, 0]).base64EncodedString()
+            samples: Data([0, 0]).base64EncodedString(),
+            audioSequence: 0
         ))
         XCTAssertEqual(message.inputSource, "appleWatch")
         XCTAssertEqual(message.profileRevision, 8)
         XCTAssertEqual(message.sessionID, sessionID)
         XCTAssertEqual(message.voiceIntent, WatchVoiceIntent.foregroundDictation.rawValue)
+        XCTAssertEqual(message.audioSequence, 0)
         XCTAssertNil(message.threadID)
         var partialForeground = message
         partialForeground.threadID = "thr_partial"
@@ -140,6 +403,66 @@ final class WristBridgeConnectionTests: XCTestCase {
             intent: .codexTask,
             codexTaskIdentity: identity
         ))
+        XCTAssertNil(WristBridgeConnection.voiceMessage(
+            type: "audio",
+            sessionID: sessionID,
+            profileRevision: 8,
+            samples: Data([0, 0]).base64EncodedString()
+        ))
+    }
+
+    func testMacAudioReceiptMustConfirmTheExactPacketAndVoiceTarget() throws {
+        let sessionID = UUID().uuidString
+        let valid = WristBridgeWireMessage(
+            type: "audioAck",
+            audioSequence: 7,
+            audioAccepted: true,
+            audioContiguousThrough: 7,
+            sessionID: sessionID,
+            inputSource: WristBridgeWireMessage.appleWatchInputSource,
+            profileRevision: 8,
+            voiceIntent: WatchVoiceIntent.foregroundDictation.rawValue
+        )
+        XCTAssertEqual(
+            WristBridgeConnection.audioDeliveryReceipt(
+                from: valid,
+                expectedSessionID: sessionID,
+                expectedProfileRevision: 8,
+                expectedSequence: 7,
+                expectedIntent: .foregroundDictation,
+                expectedCodexTaskIdentity: nil,
+                expectedCodexConversationTarget: nil
+            ),
+            WristBridgeAudioDeliveryReceipt(
+                sequence: 7,
+                accepted: true,
+                contiguousThrough: 7
+            )
+        )
+
+        var onlyReceivedByTransport = valid
+        onlyReceivedByTransport.audioContiguousThrough = 6
+        XCTAssertNil(WristBridgeConnection.audioDeliveryReceipt(
+            from: onlyReceivedByTransport,
+            expectedSessionID: sessionID,
+            expectedProfileRevision: 8,
+            expectedSequence: 7,
+            expectedIntent: .foregroundDictation,
+            expectedCodexTaskIdentity: nil,
+            expectedCodexConversationTarget: nil
+        ))
+
+        var wrongSession = valid
+        wrongSession.sessionID = UUID().uuidString
+        XCTAssertNil(WristBridgeConnection.audioDeliveryReceipt(
+            from: wrongSession,
+            expectedSessionID: sessionID,
+            expectedProfileRevision: 8,
+            expectedSequence: 7,
+            expectedIntent: .foregroundDictation,
+            expectedCodexTaskIdentity: nil,
+            expectedCodexConversationTarget: nil
+        ))
     }
 
     func testCodexVoiceTargetsRequireTheExactCompletedTurnAndRevision() throws {
@@ -147,7 +470,7 @@ final class WristBridgeConnectionTests: XCTestCase {
         let snapshot = WatchCodexTaskSnapshot(
             threadID: threadID,
             turnID: "turn_task_123",
-            cwd: "/tmp/wristremote",
+            workspaceLabel: "wristremote",
             title: "Example task",
             summary: "Example result",
             state: .completed,
@@ -190,7 +513,7 @@ final class WristBridgeConnectionTests: XCTestCase {
             snapshot: WatchCodexTaskSnapshot(
                 threadID: threadID,
                 turnID: identity.turnID,
-                cwd: snapshot.cwd,
+                workspaceLabel: snapshot.workspaceLabel,
                 title: snapshot.title,
                 state: .running,
                 revision: snapshot.revision,
@@ -208,7 +531,7 @@ final class WristBridgeConnectionTests: XCTestCase {
         let nextTurn = WatchCodexTaskSnapshot(
             threadID: threadID,
             turnID: "turn_task_124",
-            cwd: snapshot.cwd,
+            workspaceLabel: snapshot.workspaceLabel,
             title: snapshot.title,
             state: .completed,
             revision: snapshot.revision + 1,
@@ -220,6 +543,195 @@ final class WristBridgeConnectionTests: XCTestCase {
             snapshot: nextTurn,
             supportsCodexTasks: true
         ))
+    }
+
+    func testConversationVoiceCarriesOneExactMacIssuedTarget() throws {
+        let fixture = try makeConversationFixture()
+        let sessionID = UUID()
+        let message = try XCTUnwrap(WristBridgeConnection.voiceMessage(
+            type: "voiceStart",
+            sessionID: sessionID.uuidString,
+            profileRevision: 5,
+            intent: .codexConversation,
+            codexConversationTarget: fixture.target
+        ))
+        XCTAssertEqual(message.codexConversationTarget, fixture.target)
+        XCTAssertNil(message.threadID)
+        XCTAssertNil(message.turnID)
+        XCTAssertNil(message.taskRevision)
+        XCTAssertTrue(WristBridgeConnection.acceptsVoiceTarget(
+            intent: .codexConversation,
+            codexTaskIdentity: nil,
+            codexConversationTarget: fixture.target,
+            snapshot: nil,
+            catalog: fixture.catalog,
+            supportsCodexTasks: false,
+            supportsCodexConversations: true,
+            nowEpochMilliseconds: 1_000
+        ))
+        XCTAssertFalse(WristBridgeConnection.acceptsVoiceTarget(
+            intent: .codexConversation,
+            codexTaskIdentity: nil,
+            codexConversationTarget: fixture.target,
+            snapshot: nil,
+            catalog: fixture.catalog,
+            supportsCodexTasks: false,
+            supportsCodexConversations: false,
+            nowEpochMilliseconds: 1_000
+        ))
+        XCTAssertNil(WristBridgeConnection.voiceMessage(
+            type: "audio",
+            sessionID: sessionID.uuidString,
+            profileRevision: 5,
+            intent: .codexConversation,
+            samples: "AA=="
+        ))
+        XCTAssertNil(WristBridgeConnection.voiceMessage(
+            type: "audio",
+            sessionID: sessionID.uuidString,
+            profileRevision: 5,
+            intent: .codexConversation,
+            codexTaskIdentity: WatchCodexTaskIdentity(
+                threadID: "thread",
+                turnID: "turn",
+                revision: 1
+            ),
+            codexConversationTarget: fixture.target,
+            samples: "AA=="
+        ))
+    }
+
+    func testConversationCatalogAndReceiptsRejectMismatchedIdentifiersAndTargets() throws {
+        let fixture = try makeConversationFixture()
+        let requestID = try XCTUnwrap(
+            UUID(uuidString: "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE")
+        )
+        let catalogEnvelope = try XCTUnwrap(
+            WristBridgeConnection.codexConversationCatalogEnvelope(from: WristBridgeWireMessage(
+                type: "codexConversationCatalogSnapshot",
+                requestID: requestID.uuidString,
+                codexConversationCatalog: fixture.catalog
+            ))
+        )
+        XCTAssertEqual(catalogEnvelope.catalog, fixture.catalog)
+        XCTAssertEqual(catalogEnvelope.requestID, requestID)
+        XCTAssertNil(WristBridgeConnection.codexConversationCatalogEnvelope(
+            from: WristBridgeWireMessage(
+                type: "codexConversationCatalogSnapshot",
+                requestID: requestID.uuidString.lowercased(),
+                codexConversationCatalog: fixture.catalog
+            )
+        ))
+
+        let targetResult = WristBridgeWireMessage(
+            type: "codexConversationTargetResult",
+            requestID: requestID.uuidString,
+            codexConversationTarget: fixture.target,
+            accepted: true
+        )
+        XCTAssertNotNil(WristBridgeConnection.codexConversationTargetReceipt(
+            from: targetResult,
+            expectedRequestID: requestID,
+            expectedTarget: fixture.target
+        ))
+        XCTAssertNil(WristBridgeConnection.codexConversationTargetReceipt(
+            from: targetResult,
+            expectedRequestID: UUID(),
+            expectedTarget: fixture.target
+        ))
+
+        let requestedNew = try XCTUnwrap(WatchCodexConversationTarget(
+            leaseID: UUID(),
+            kind: .newConversation,
+            serverEpoch: fixture.target.serverEpoch,
+            catalogRevision: fixture.target.catalogRevision,
+            entryRevision: 10,
+            threadID: nil,
+            displayTitle: "新建 Codex 会话",
+            workspaceID: fixture.target.workspaceID,
+            workspaceLabel: fixture.target.workspaceLabel,
+            expiresAtEpochMilliseconds: fixture.target.expiresAtEpochMilliseconds
+        ))
+        let created = try XCTUnwrap(WatchCodexConversationTarget(
+            leaseID: UUID(),
+            kind: .existing,
+            serverEpoch: requestedNew.serverEpoch,
+            catalogRevision: requestedNew.catalogRevision,
+            entryRevision: 11,
+            threadID: "thread_created_independently",
+            displayTitle: "独立任务",
+            workspaceID: requestedNew.workspaceID,
+            workspaceLabel: requestedNew.workspaceLabel,
+            expiresAtEpochMilliseconds: requestedNew.expiresAtEpochMilliseconds
+        ))
+        let createdResult = WristBridgeWireMessage(
+            type: "codexConversationTargetResult",
+            requestID: requestID.uuidString,
+            codexConversationTarget: created,
+            accepted: true
+        )
+        XCTAssertEqual(
+            WristBridgeConnection.codexConversationTargetReceipt(
+                from: createdResult,
+                expectedRequestID: requestID,
+                expectedTarget: requestedNew
+            )?.selectedTarget,
+            created
+        )
+
+        let submissionID = UUID()
+        let draftID = UUID()
+        let draftResult = WristBridgeWireMessage(
+            type: "codexConversationDraftReceipt",
+            submissionID: submissionID.uuidString,
+            draftID: draftID.uuidString,
+            codexConversationTarget: fixture.target,
+            resolvedCodexConversationTarget: fixture.target,
+            accepted: true
+        )
+        XCTAssertNotNil(WristBridgeConnection.codexConversationDraftReceipt(
+            from: draftResult,
+            expectedSubmissionID: submissionID,
+            expectedDraftID: draftID,
+            expectedTarget: fixture.target
+        ))
+        XCTAssertNil(WristBridgeConnection.codexConversationDraftReceipt(
+            from: draftResult,
+            expectedSubmissionID: submissionID,
+            expectedDraftID: UUID(),
+            expectedTarget: fixture.target
+        ))
+        let differentLeaseForSameThread = try XCTUnwrap(WatchCodexConversationTarget(
+            leaseID: UUID(),
+            kind: .existing,
+            serverEpoch: fixture.target.serverEpoch,
+            catalogRevision: fixture.target.catalogRevision,
+            entryRevision: fixture.target.entryRevision,
+            threadID: fixture.target.threadID,
+            displayTitle: fixture.target.displayTitle,
+            workspaceID: fixture.target.workspaceID,
+            workspaceLabel: fixture.target.workspaceLabel,
+            expiresAtEpochMilliseconds: fixture.target.expiresAtEpochMilliseconds
+        ))
+        XCTAssertNil(WristBridgeConnection.codexConversationDraftReceipt(
+            from: WristBridgeWireMessage(
+                type: "codexConversationDraftReceipt",
+                submissionID: submissionID.uuidString,
+                draftID: draftID.uuidString,
+                codexConversationTarget: fixture.target,
+                resolvedCodexConversationTarget: differentLeaseForSameThread,
+                accepted: true
+            ),
+            expectedSubmissionID: submissionID,
+            expectedDraftID: draftID,
+            expectedTarget: fixture.target
+        ))
+        XCTAssertFalse(WristBridgeConnection.acceptsVoiceTargetShape(
+            intent: .codexConversation,
+            codexTaskIdentity: nil,
+            codexConversationTarget: requestedNew
+        ))
+        XCTAssertEqual(WristBridgeConnection.codexConversationRequestTimeoutSeconds, 13)
     }
 
     func testWireTaskTombstoneIsExplicitAndRejectsAmbiguity() throws {
@@ -236,7 +748,7 @@ final class WristBridgeConnectionTests: XCTestCase {
         let snapshot = WatchCodexTaskSnapshot(
             threadID: "thr_tombstone",
             turnID: "turn_tombstone",
-            cwd: "/tmp",
+            workspaceLabel: "tmp",
             title: "Task",
             state: .completed,
             revision: 1,
@@ -366,6 +878,19 @@ final class WristBridgeConnectionTests: XCTestCase {
         XCTAssertFalse(WristBridgeConnection.State.awaitingApproval.needsConnectionWatchdog)
         XCTAssertFalse(WristBridgeConnection.State.connected.needsConnectionWatchdog)
         XCTAssertEqual(WristBridgeConnection.connectionWatchdogSeconds, 12)
+        XCTAssertEqual(
+            WristBridgeConnection.connectionWatchdogSeconds(for: .lan),
+            2.5
+        )
+        XCTAssertEqual(
+            WristBridgeConnection.connectionWatchdogSeconds(for: .tailnet),
+            6
+        )
+        XCTAssertLessThan(
+            (WristBridgeConnection.lanConnectionWatchdogSeconds
+                + WristBridgeConnection.tailnetConnectionWatchdogSeconds) * 1_000,
+            Double(WatchRelayController.liveStatusRecoveryMilliseconds)
+        )
         XCTAssertTrue(WristBridgeConnection.shouldExpireConnectionWatchdog(
             expectedGeneration: 4,
             currentGeneration: 4,
@@ -392,6 +917,78 @@ final class WristBridgeConnectionTests: XCTestCase {
         ))
     }
 
+    func testPrivateNetworkTargetOnlyAcceptsFullMagicDNSOrTailscaleAddresses() throws {
+        XCTAssertEqual(
+            WristPrivateNetworkHostValidator.normalizedHost(
+                "  My-Mac.Example.ts.net.  "
+            ),
+            "my-mac.example.ts.net"
+        )
+        XCTAssertEqual(
+            WristPrivateNetworkHostValidator.normalizedHost("100.64.0.1"),
+            "100.64.0.1"
+        )
+        XCTAssertEqual(
+            WristPrivateNetworkHostValidator.normalizedHost("100.127.255.254"),
+            "100.127.255.254"
+        )
+        XCTAssertEqual(
+            WristPrivateNetworkHostValidator.normalizedHost("fd7a:115c:a1e0::9"),
+            "fd7a:115c:a1e0::9"
+        )
+
+        for rejected in [
+            "mac.ts.net",
+            "https://mac.example.invalid",
+            "mac.example.ts.net:60927",
+            "mac.example.ts.net/path",
+            "user@example.invalid",
+            "192.168.1.2",
+            [100, 63, 255, 255].map(String.init).joined(separator: "."),
+            [100, 128, 0, 1].map(String.init).joined(separator: "."),
+            "192.0.2.8",
+            "fd12:3456::1",
+            "example.com",
+        ] {
+            XCTAssertNil(
+                WristPrivateNetworkHostValidator.normalizedHost(rejected),
+                "expected private-network target to be rejected: \(rejected)"
+            )
+        }
+
+        let configuration = try WristPrivateNetworkConfiguration.validated(
+            isEnabled: true,
+            host: "mac.example.ts.net",
+            privateOnly: false
+        ).get()
+        XCTAssertTrue(configuration.isEnabled)
+        XCTAssertEqual(
+            configuration.endpoint,
+            .hostPort(host: "mac.example.ts.net", port: 60_927)
+        )
+        XCTAssertThrowsError(try WristPrivateNetworkConfiguration.validated(
+            isEnabled: true,
+            host: "mac.example.ts.net",
+            privateOnly: true
+        ).get())
+        let privateOnlyIP = try WristPrivateNetworkConfiguration.validated(
+            isEnabled: true,
+            host: "100.64.0.1",
+            privateOnly: true
+        ).get()
+        XCTAssertEqual(
+            privateOnlyIP.endpoint,
+            .hostPort(host: "100.64.0.1", port: 60_927)
+        )
+        XCTAssertEqual(
+            try WristPrivateNetworkConfiguration.validated(
+                isEnabled: false,
+                host: "not a host"
+            ).get(),
+            .disabled
+        )
+    }
+
     func testIdentityStorageOnlyCreatesForMissingAndNeverForTransientErrors() {
         XCTAssertEqual(
             WristBridgeInstallationIdentity.storageAction(
@@ -407,7 +1004,7 @@ final class WristBridgeConnectionTests: XCTestCase {
                 hasStoredData: true,
                 hasValidKey: false
             ),
-            .replaceCorrupt
+            .reject
         )
         XCTAssertEqual(
             WristBridgeInstallationIdentity.storageAction(
@@ -424,7 +1021,7 @@ final class WristBridgeConnectionTests: XCTestCase {
                     hasStoredData: false,
                     hasValidKey: false
                 ),
-                .retry
+                .reject
             )
         }
         XCTAssertEqual(
@@ -433,8 +1030,45 @@ final class WristBridgeConnectionTests: XCTestCase {
                 hasStoredData: false,
                 hasValidKey: false
             ),
-            .retry
+            .reject
         )
+    }
+
+    private func makeConversationFixture() throws -> (
+        target: WatchCodexConversationTarget,
+        catalog: WatchCodexConversationCatalog
+    ) {
+        let serverEpoch = UUID()
+        let target = try XCTUnwrap(WatchCodexConversationTarget(
+            leaseID: UUID(),
+            kind: .existing,
+            serverEpoch: serverEpoch,
+            catalogRevision: 4,
+            entryRevision: 9,
+            threadID: "thread_conversation_fixture",
+            displayTitle: "会话",
+            workspaceID: "workspace-project",
+            workspaceLabel: "项目",
+            expiresAtEpochMilliseconds: 4_000_000_000_000
+        ))
+        let entry = try XCTUnwrap(WatchCodexConversationEntry(
+            threadID: target.threadID,
+            title: target.displayTitle,
+            workspaceLabel: target.workspaceLabel,
+            state: .idle,
+            updatedAtEpochMilliseconds: 900,
+            canAcceptInput: true,
+            entryRevision: target.entryRevision,
+            target: target
+        ))
+        let catalog = try XCTUnwrap(WatchCodexConversationCatalog(
+            serverEpoch: serverEpoch,
+            revision: target.catalogRevision,
+            entries: [entry],
+            hasMore: false,
+            refreshedAtEpochMilliseconds: 1_000
+        ))
+        return (target, catalog)
     }
 }
 #endif

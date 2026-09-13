@@ -4,40 +4,66 @@ import SwiftUI
 
 struct BridgeContentView: View {
     @ObservedObject var model: BridgeAppModel
+    @State private var pairingSheet: BridgePairingDevice?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
             Form {
-                Section("连接") {
+                Section("iPhone 与 Apple Watch") {
+                    connectionRow(
+                        title: "iPhone",
+                        symbol: "iphone",
+                        detail: "扫码连接 Mac，手机也能直接遥控。",
+                        clients: model.connectedClients.filter { $0.transport == "TCP" },
+                        device: .iphone
+                    )
+                    connectionRow(
+                        title: "Apple Watch",
+                        symbol: "applewatch",
+                        detail: "先用 iPhone 完成设置，之后在同一局域网内直连 Mac。",
+                        clients: model.connectedClients.filter { $0.transport == "HTTP" },
+                        device: .watch
+                    )
+                    Text("12 个按键，支持单击、双击、长按。映射在 iPhone 中设置；Watch 直连提供按键遥控，语音仍需 iPhone 中转。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("服务状态") {
                     LabeledContent("状态") {
                         HStack(spacing: 7) {
                             Circle()
                                 .fill(statusColor)
                                 .frame(width: 8, height: 8)
+                            if case .loadingIdentity = model.serverStatus {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
                             Text(model.statusTitle)
+                            if model.canRetryServerIdentity {
+                                Button("重试读取") {
+                                    model.retryServerIdentity()
+                                }
+                            }
                         }
                     }
                     Text(model.statusDetail)
                         .foregroundStyle(.secondary)
                         .font(.callout)
-                    LabeledContent("公网控制") {
-                        HStack(spacing: 7) {
-                            Circle()
-                                .fill(model.isInternetRelayConnected ? Color.green : Color.secondary)
-                                .frame(width: 8, height: 8)
-                            Text(model.internetRelayStatusTitle)
-                        }
+                    LabeledContent("Watch 直连服务") {
+                        Text(model.directBridgeConfiguration == nil ? "暂不可用" : "可配对")
+                            .foregroundStyle(.secondary)
                     }
-                    Text(model.internetRelayStatusDetail)
-                        .foregroundStyle(.secondary)
-                        .font(.callout)
-                    LabeledContent("Codex 任务同步") {
+                }
+
+                Section("Codex") {
+                    LabeledContent("任务同步") {
                         Text(model.codexHookStatusTitle)
                             .foregroundStyle(.secondary)
                     }
-                    LabeledContent("锁定的 Codex 聊天") {
+                    LabeledContent("锁定的聊天") {
                         HStack(spacing: 10) {
                             Text(codexThreadLabel)
                                 .foregroundStyle(.secondary)
@@ -53,6 +79,31 @@ struct BridgeContentView: View {
                     }
                 }
 
+                Section("私有网络") {
+                    LabeledContent("Tailscale 连接") {
+                        HStack(spacing: 7) {
+                            Circle()
+                                .fill(tailnetStatusColor)
+                                .frame(width: 8, height: 8)
+                            Text(model.tailnetStatusTitle)
+                        }
+                    }
+                    Text(model.tailnetStatusDetail)
+                        .foregroundStyle(.secondary)
+                        .font(.callout)
+                    Toggle(
+                        "允许 Tailscale 私有网络连接",
+                        isOn: Binding(
+                            get: { model.tailnetAccessEnabled },
+                            set: model.setTailnetAccessEnabled
+                        )
+                    )
+                    Text("用于 iPhone 私有网络连接。Watch 直连当前仅使用局域网；不会开启 Funnel、端口映射或公网监听。")
+                        .foregroundStyle(.secondary)
+                        .font(.callout)
+                    LabeledContent("公网控制", value: model.internetRelayStatusTitle)
+                }
+
                 Section("系统权限") {
                     permissionRow(
                         title: "辅助功能",
@@ -61,12 +112,15 @@ struct BridgeContentView: View {
                         action: model.requestAccessibility
                     )
                     permissionRow(
-                        title: "语音识别",
+                        title: "前台文字听写",
                         value: model.speechAuthorizationTitle,
                         buttonTitle: "请求权限",
                         action: model.requestSpeechAuthorization
                     )
-                    LabeledContent("实际识别语言") {
+                    Text("这个权限只供“把文字输入当前文本框”的传统遥控功能使用。Codex 语音使用已登录账号的 Codex 转写服务，再把文字发到所选任务；不使用 Mac 听写权限。")
+                        .foregroundStyle(.secondary)
+                        .font(.callout)
+                    LabeledContent("前台听写语言") {
                         Text(model.speechLocaleIdentifier)
                             .foregroundStyle(.secondary)
                     }
@@ -113,10 +167,13 @@ struct BridgeContentView: View {
             .formStyle(.grouped)
         }
         .frame(minWidth: 620, minHeight: 560)
+        .sheet(item: $pairingSheet) { device in
+            BridgePairingSheet(model: model, device: device)
+        }
         .alert(
             "连接 Wrist Remote",
             isPresented: Binding(
-                get: { model.pairingRequest != nil },
+                get: { model.pairingRequest != nil && pairingSheet == nil },
                 set: { if !$0 { model.resolvePairing(false) } }
             ),
             presenting: model.pairingRequest
@@ -124,7 +181,7 @@ struct BridgeContentView: View {
             Button("拒绝", role: .cancel) { model.resolvePairing(false) }
             Button("允许") { model.resolvePairing(true) }
         } message: { request in
-            Text("\(request.deviceName) 的确认码是 \(request.pairingCode)。请与 iPhone 上显示的六位数字核对。")
+            Text("\(request.deviceName) 的确认码是 \(request.pairingCode)。请与设备上显示的六位数字核对；只有一致时才允许。")
         }
         .alert(
             "操作未完成",
@@ -143,7 +200,7 @@ struct BridgeContentView: View {
         VStack(alignment: .leading, spacing: 5) {
             Text("腕上遥控桥")
                 .font(.title2.weight(.semibold))
-            Text("独立服务 Apple Watch；不读取、不覆盖其他遥控器或输入工具配置。")
+            Text("用 iPhone 或 Apple Watch 遥控这台 Mac。与其他遥控器、输入工具的配置相互独立。")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
@@ -151,12 +208,51 @@ struct BridgeContentView: View {
         .padding(.vertical, 18)
     }
 
+    private func connectionRow(
+        title: String,
+        symbol: String,
+        detail: String,
+        clients: [WristRemoteClientSnapshot],
+        device: BridgePairingDevice
+    ) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            Image(systemName: symbol)
+                .font(.title2)
+                .frame(width: 26)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.headline)
+                Text(detail).font(.callout).foregroundStyle(.secondary)
+                Text(clients.isEmpty ? "未连接" : "已连接 · " + clients.map(\.name).joined(separator: "、"))
+                    .font(.caption)
+                    .foregroundStyle(clients.isEmpty ? Color.secondary : Color.primary)
+                    .accessibilityIdentifier(device == .iphone ? "iphoneConnectionStatus" : "watchConnectionStatus")
+            }
+            Spacer(minLength: 12)
+            Button(device == .iphone ? "连接 iPhone…" : "连接 Apple Watch…") {
+                pairingSheet = device
+            }
+            .accessibilityIdentifier(device == .iphone ? "pairIPhone" : "pairAppleWatch")
+        }
+        .padding(.vertical, 6)
+    }
+
     private var statusColor: Color {
         switch model.serverStatus {
         case .connected: return .green
         case .ready: return .blue
-        case .failed: return .red
+        case .identityUnavailable, .failed: return .red
+        case .loadingIdentity: return .blue
         case .stopped, .starting: return .secondary
+        }
+    }
+
+    private var tailnetStatusColor: Color {
+        switch model.tailnetStatus {
+        case .ready: return .green
+        case .starting, .waiting: return .blue
+        case .failed: return .orange
+        case .disabled: return .secondary
         }
     }
 

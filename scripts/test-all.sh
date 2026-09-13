@@ -26,6 +26,7 @@ trap '/bin/rm -rf -- "$TEMP_ROOT"' EXIT
     -configuration Debug \
     -destination 'platform=macOS' \
     -derivedDataPath "$TEMP_ROOT/BridgeDerivedData" \
+    WRISTREMOTE_BRIDGE_BUNDLE_IDENTIFIER=org.example.wristremote.bridge.testsession \
     CODE_SIGNING_ALLOWED=NO \
     test
 )

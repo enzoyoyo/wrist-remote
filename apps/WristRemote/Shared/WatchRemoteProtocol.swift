@@ -63,23 +63,36 @@ enum WatchRemoteProtocol {
         case codexTaskPayload
         case codexTaskCleared
         case codexTaskStateRevision
+        case codexConversationCatalogPayload
+        case codexConversationTargetPayload
+        case resolvedCodexConversationTargetPayload
         case voiceOutcomePayload
         case finalSequence
         case transcript
         case submissionID
+        case draftID
+        case draftExpiresAtEpochMilliseconds
         case internetRelayProvisioning
+        case internetRelayProvisioningCleared
     }
 
     enum Kind: String {
         case buttonEvent
         case voiceStart
         case voiceStop
+        case voiceCancel
         case requestStatus
         case favoritesUpdate
         case status
         case codexTaskSnapshot
         case voiceOutcome
         case codexReplySubmit
+        case codexConversationCatalogRequest
+        case codexConversationCatalogSnapshot
+        case codexConversationTargetSelect
+        case codexConversationTargetResult
+        case codexConversationDraftSubmit
+        case codexConversationDraftReceipt
     }
 
     enum ButtonPhase: String, Codable, Sendable {
@@ -125,9 +138,14 @@ enum WatchRemoteProtocol {
         streamID: UUID,
         profileRevision: Int,
         intent: WatchVoiceIntent = .foregroundDictation,
-        codexTaskIdentity: WatchCodexTaskIdentity? = nil
+        codexTaskIdentity: WatchCodexTaskIdentity? = nil,
+        codexConversationTarget: WatchCodexConversationTarget? = nil
     ) -> [String: Any]? {
-        guard acceptsVoiceTargetShape(intent: intent, identity: codexTaskIdentity) else {
+        guard acceptsVoiceTargetShape(
+            intent: intent,
+            identity: codexTaskIdentity,
+            conversationTarget: codexConversationTarget
+        ) else {
             return nil
         }
         var values: [String: Any] = [
@@ -136,6 +154,7 @@ enum WatchRemoteProtocol {
             Key.voiceIntent.rawValue: intent.rawValue,
         ]
         add(identity: codexTaskIdentity, to: &values)
+        add(conversationTarget: codexConversationTarget, to: &values)
         return baseMessage(kind: .voiceStart).merging(values) { _, newValue in newValue }
     }
 
@@ -144,9 +163,14 @@ enum WatchRemoteProtocol {
         profileRevision: Int,
         intent: WatchVoiceIntent = .foregroundDictation,
         codexTaskIdentity: WatchCodexTaskIdentity? = nil,
+        codexConversationTarget: WatchCodexConversationTarget? = nil,
         finalSequence: UInt64? = nil
     ) -> [String: Any]? {
-        guard acceptsVoiceTargetShape(intent: intent, identity: codexTaskIdentity) else {
+        guard acceptsVoiceTargetShape(
+            intent: intent,
+            identity: codexTaskIdentity,
+            conversationTarget: codexConversationTarget
+        ) else {
             return nil
         }
         var values: [String: Any] = [
@@ -155,6 +179,7 @@ enum WatchRemoteProtocol {
             Key.voiceIntent.rawValue: intent.rawValue,
         ]
         add(identity: codexTaskIdentity, to: &values)
+        add(conversationTarget: codexConversationTarget, to: &values)
         if let finalSequence { values[Key.finalSequence.rawValue] = finalSequence }
         return baseMessage(kind: .voiceStop).merging(values) { _, newValue in newValue }
     }
@@ -165,14 +190,163 @@ enum WatchRemoteProtocol {
         ]) { _, newValue in newValue }
     }
 
+    /// Cancellation never carries a final sequence and can never finalize audio.
+    static func voiceCancelMessage(
+        streamID: UUID,
+        profileRevision: Int,
+        intent: WatchVoiceIntent,
+        codexTaskIdentity: WatchCodexTaskIdentity? = nil,
+        codexConversationTarget: WatchCodexConversationTarget? = nil
+    ) -> [String: Any]? {
+        guard var message = voiceStartMessage(
+            streamID: streamID,
+            profileRevision: profileRevision,
+            intent: intent,
+            codexTaskIdentity: codexTaskIdentity,
+            codexConversationTarget: codexConversationTarget
+        ) else { return nil }
+        message[Key.kind.rawValue] = Kind.voiceCancel.rawValue
+        return message
+    }
+
+    static func codexConversationCatalogRequestMessage(requestID: UUID) -> [String: Any] {
+        baseMessage(kind: .codexConversationCatalogRequest).merging([
+            Key.requestID.rawValue: requestID.uuidString,
+        ]) { _, newValue in newValue }
+    }
+
+    static func codexConversationCatalogRequest(from message: [String: Any]) -> UUID? {
+        guard kind(from: message) == .codexConversationCatalogRequest else { return nil }
+        return canonicalUUID(in: message, key: Key.requestID.rawValue)
+    }
+
+    static func codexConversationCatalogSnapshotMessage(
+        _ catalog: WatchCodexConversationCatalog,
+        requestID: UUID? = nil
+    ) -> [String: Any]? {
+        guard let payload = encodedPayload(catalog) else { return nil }
+        var values: [String: Any] = [
+            Key.codexConversationCatalogPayload.rawValue: payload,
+        ]
+        if let requestID { values[Key.requestID.rawValue] = requestID.uuidString }
+        return baseMessage(kind: .codexConversationCatalogSnapshot).merging(values) {
+            _, newValue in newValue
+        }
+    }
+
+    static func codexConversationCatalogSnapshot(
+        from message: [String: Any]
+    ) -> (catalog: WatchCodexConversationCatalog, requestID: UUID?)? {
+        guard let messageKind = kind(from: message),
+              messageKind == .codexConversationCatalogSnapshot || messageKind == .status,
+              let payload = message[Key.codexConversationCatalogPayload.rawValue] as? String,
+              let catalog = decodedPayload(
+                  WatchCodexConversationCatalog.self,
+                  from: payload,
+                  maximumEncodedByteCount: WatchCodexConversationWireValidation
+                      .maximumCatalogPayloadByteCount
+              )
+        else { return nil }
+        let requestID = canonicalOptionalUUID(in: message, key: Key.requestID.rawValue)
+        guard requestID.isValid else { return nil }
+        return (catalog, requestID.value)
+    }
+
+    static func codexConversationTargetSelectMessage(
+        requestID: UUID,
+        target: WatchCodexConversationTarget
+    ) -> [String: Any]? {
+        guard let payload = encodedPayload(target) else { return nil }
+        return baseMessage(kind: .codexConversationTargetSelect).merging([
+            Key.requestID.rawValue: requestID.uuidString,
+            Key.codexConversationTargetPayload.rawValue: payload,
+        ]) { _, newValue in newValue }
+    }
+
+    static func codexConversationTargetSelection(
+        from message: [String: Any]
+    ) -> (requestID: UUID, target: WatchCodexConversationTarget)? {
+        guard kind(from: message) == .codexConversationTargetSelect,
+              let requestID = canonicalUUID(in: message, key: Key.requestID.rawValue),
+              let payload = message[Key.codexConversationTargetPayload.rawValue] as? String,
+              let target = decodedPayload(
+                  WatchCodexConversationTarget.self,
+                  from: payload,
+                  maximumEncodedByteCount: WatchCodexConversationWireValidation
+                      .maximumTargetPayloadByteCount
+              )
+        else { return nil }
+        return (requestID, target)
+    }
+
+    static func codexConversationTargetResultMessage(
+        requestID: UUID,
+        accepted: Bool,
+        selectedTarget: WatchCodexConversationTarget?,
+        detail: String? = nil
+    ) -> [String: Any]? {
+        guard accepted == (selectedTarget != nil),
+              WatchCodexConversationWireValidation.isValidDetail(detail)
+        else { return nil }
+        var values: [String: Any] = [
+            Key.requestID.rawValue: requestID.uuidString,
+            Key.accepted.rawValue: accepted,
+        ]
+        if let selectedTarget {
+            guard let payload = encodedPayload(selectedTarget) else { return nil }
+            values[Key.codexConversationTargetPayload.rawValue] = payload
+        }
+        if let detail { values[Key.detail.rawValue] = detail }
+        return baseMessage(kind: .codexConversationTargetResult).merging(values) {
+            _, newValue in newValue
+        }
+    }
+
+    static func codexConversationTargetResult(
+        from message: [String: Any]
+    ) -> (
+        requestID: UUID,
+        accepted: Bool,
+        selectedTarget: WatchCodexConversationTarget?,
+        detail: String?
+    )? {
+        guard kind(from: message) == .codexConversationTargetResult,
+              let requestID = canonicalUUID(in: message, key: Key.requestID.rawValue),
+              let accepted = boolean(in: message, key: Key.accepted.rawValue)
+        else { return nil }
+        let detail = message[Key.detail.rawValue] as? String
+        guard WatchCodexConversationWireValidation.isValidDetail(detail) else { return nil }
+        let target: WatchCodexConversationTarget?
+        if let payload = message[Key.codexConversationTargetPayload.rawValue] as? String {
+            guard let decoded = decodedPayload(
+                WatchCodexConversationTarget.self,
+                from: payload,
+                maximumEncodedByteCount: WatchCodexConversationWireValidation
+                    .maximumTargetPayloadByteCount
+            ) else {
+                return nil
+            }
+            target = decoded
+        } else {
+            target = nil
+        }
+        guard accepted == (target != nil) else { return nil }
+        return (requestID, accepted, target, detail)
+    }
+
     static func voiceStartReply(
         accepted: Bool,
         streamID: UUID,
         profileRevision: Int,
         intent: WatchVoiceIntent = .foregroundDictation,
-        codexTaskIdentity: WatchCodexTaskIdentity? = nil
+        codexTaskIdentity: WatchCodexTaskIdentity? = nil,
+        codexConversationTarget: WatchCodexConversationTarget? = nil
     ) -> [String: Any]? {
-        guard acceptsVoiceTargetShape(intent: intent, identity: codexTaskIdentity) else {
+        guard acceptsVoiceTargetShape(
+            intent: intent,
+            identity: codexTaskIdentity,
+            conversationTarget: codexConversationTarget
+        ) else {
             return nil
         }
         var values: [String: Any] = [
@@ -182,6 +356,7 @@ enum WatchRemoteProtocol {
             Key.voiceIntent.rawValue: intent.rawValue,
         ]
         add(identity: codexTaskIdentity, to: &values)
+        add(conversationTarget: codexConversationTarget, to: &values)
         return baseMessage(kind: .voiceStart).merging(values) { _, newValue in newValue }
     }
 
@@ -192,7 +367,8 @@ enum WatchRemoteProtocol {
         streamID: UUID,
         profileRevision: Int,
         intent: WatchVoiceIntent,
-        codexTaskIdentity: WatchCodexTaskIdentity?
+        codexTaskIdentity: WatchCodexTaskIdentity?,
+        codexConversationTarget: WatchCodexConversationTarget?
     )? {
         guard protocolVersion(in: message) == version,
               message[Key.kind.rawValue] as? String == Kind.voiceStart.rawValue,
@@ -205,7 +381,8 @@ enum WatchRemoteProtocol {
                 event.streamID,
                 event.profileRevision,
                 event.intent,
-                event.codexTaskIdentity
+                event.codexTaskIdentity,
+                event.codexConversationTarget
             )
         }
         if let number = message[Key.accepted.rawValue] as? NSNumber {
@@ -215,7 +392,8 @@ enum WatchRemoteProtocol {
                 event.streamID,
                 event.profileRevision,
                 event.intent,
-                event.codexTaskIdentity
+                event.codexTaskIdentity,
+                event.codexConversationTarget
             )
         }
         return nil
@@ -262,8 +440,13 @@ enum WatchRemoteProtocol {
         favorites: [WatchRemoteCommand],
         codexTask: WatchCodexTaskSnapshot? = nil,
         codexTaskStateRevision: Int,
-        voiceOutcome: WatchVoiceOutcome? = nil,
-        internetRelayProvisioning: WristInternetRelayDeviceProvisioning? = nil
+        // Voice outcomes can contain a full transcript. Keep them live-only:
+        // WCSession application context is durable transport state, not a
+        // protected draft store.
+        voiceOutcome _: WatchVoiceOutcome? = nil,
+        codexConversationCatalog: WatchCodexConversationCatalog? = nil,
+        internetRelayProvisioning: WristInternetRelayDeviceProvisioning? = nil,
+        internetRelayProvisioningCleared: Bool = false
     ) -> [String: Any] {
         var context = statusMessage(status)
         if let favorites = validatedFavorites(favorites) {
@@ -278,15 +461,26 @@ enum WatchRemoteProtocol {
             context[Key.codexTaskCleared.rawValue] = true
             context[Key.codexTaskStateRevision.rawValue] = codexTaskStateRevision
         }
-        if let voiceOutcome,
-           let payload = encodedPayload(voiceOutcome) {
-            context[Key.voiceOutcomePayload.rawValue] = payload
+        if let codexConversationCatalog,
+           let payload = encodedPayload(codexConversationCatalog) {
+            context[Key.codexConversationCatalogPayload.rawValue] = payload
         }
-        if let internetRelayProvisioning,
+        if internetRelayProvisioningCleared {
+            context[Key.internetRelayProvisioningCleared.rawValue] = true
+        } else if let internetRelayProvisioning,
            let payload = internetRelayProvisioning.encodedBase64() {
             context[Key.internetRelayProvisioning.rawValue] = payload
         }
         return context
+    }
+
+    static func isInternetRelayProvisioningCleared(
+        in message: [String: Any]
+    ) -> Bool {
+        guard let value = message[Key.internetRelayProvisioningCleared.rawValue]
+            as? Bool
+        else { return false }
+        return value
     }
 
     static func internetRelayProvisioning(
@@ -348,7 +542,9 @@ enum WatchRemoteProtocol {
     }
 
     static func voiceOutcomeMessage(_ outcome: WatchVoiceOutcome) -> [String: Any]? {
-        guard let payload = encodedPayload(outcome) else { return nil }
+        guard outcome.hasValidWireShape,
+              let payload = encodedPayload(outcome)
+        else { return nil }
         return baseMessage(kind: .voiceOutcome).merging([
             Key.voiceOutcomePayload.rawValue: payload,
         ]) { _, newValue in newValue }
@@ -358,7 +554,119 @@ enum WatchRemoteProtocol {
         guard protocolVersion(in: message) == version,
               let payload = message[Key.voiceOutcomePayload.rawValue] as? String
         else { return nil }
-        return decodedPayload(WatchVoiceOutcome.self, from: payload)
+        guard let outcome = decodedPayload(
+            WatchVoiceOutcome.self,
+            from: payload,
+            maximumEncodedByteCount: WatchCodexConversationWireValidation
+                .maximumVoiceOutcomePayloadByteCount
+        ),
+              outcome.hasValidWireShape
+        else { return nil }
+        return outcome
+    }
+
+    static func codexConversationDraftSubmitMessage(
+        submissionID: UUID,
+        draftID: UUID,
+        target: WatchCodexConversationTarget,
+        transcript: String
+    ) -> [String: Any]? {
+        guard target.kind == .existing,
+              WatchCodexConversationWireValidation.isValidTranscript(transcript),
+              let targetPayload = encodedPayload(target)
+        else { return nil }
+        return baseMessage(kind: .codexConversationDraftSubmit).merging([
+            Key.submissionID.rawValue: submissionID.uuidString,
+            Key.draftID.rawValue: draftID.uuidString,
+            Key.codexConversationTargetPayload.rawValue: targetPayload,
+            Key.transcript.rawValue: transcript,
+        ]) { _, newValue in newValue }
+    }
+
+    static func codexConversationDraftSubmit(
+        from message: [String: Any]
+    ) -> (
+        submissionID: UUID,
+        draftID: UUID,
+        target: WatchCodexConversationTarget,
+        transcript: String
+    )? {
+        guard kind(from: message) == .codexConversationDraftSubmit,
+              message[Key.accepted.rawValue] == nil,
+              let submissionID = canonicalUUID(in: message, key: Key.submissionID.rawValue),
+              let draftID = canonicalUUID(in: message, key: Key.draftID.rawValue),
+              let targetPayload = message[Key.codexConversationTargetPayload.rawValue] as? String,
+              let target = decodedPayload(
+                  WatchCodexConversationTarget.self,
+                  from: targetPayload,
+                  maximumEncodedByteCount: WatchCodexConversationWireValidation
+                      .maximumTargetPayloadByteCount
+              ),
+              target.kind == .existing,
+              let transcript = message[Key.transcript.rawValue] as? String,
+              WatchCodexConversationWireValidation.isValidTranscript(transcript)
+        else { return nil }
+        return (submissionID, draftID, target, transcript)
+    }
+
+    static func codexConversationDraftReceiptMessage(
+        accepted: Bool,
+        submissionID: UUID,
+        draftID: UUID,
+        resolvedTarget: WatchCodexConversationTarget?,
+        detail: String? = nil
+    ) -> [String: Any]? {
+        guard accepted == (resolvedTarget != nil),
+              WatchCodexConversationWireValidation.isValidDetail(detail)
+        else { return nil }
+        var values: [String: Any] = [
+            Key.accepted.rawValue: accepted,
+            Key.submissionID.rawValue: submissionID.uuidString,
+            Key.draftID.rawValue: draftID.uuidString,
+        ]
+        if let resolvedTarget {
+            guard let payload = encodedPayload(resolvedTarget) else { return nil }
+            values[Key.resolvedCodexConversationTargetPayload.rawValue] = payload
+        }
+        if let detail { values[Key.detail.rawValue] = detail }
+        return baseMessage(kind: .codexConversationDraftReceipt).merging(values) {
+            _, newValue in newValue
+        }
+    }
+
+    static func codexConversationDraftReceipt(
+        from message: [String: Any]
+    ) -> (
+        accepted: Bool,
+        submissionID: UUID,
+        draftID: UUID,
+        resolvedTarget: WatchCodexConversationTarget?,
+        detail: String?
+    )? {
+        guard kind(from: message) == .codexConversationDraftReceipt,
+              message[Key.transcript.rawValue] == nil,
+              let accepted = boolean(in: message, key: Key.accepted.rawValue),
+              let submissionID = canonicalUUID(in: message, key: Key.submissionID.rawValue),
+              let draftID = canonicalUUID(in: message, key: Key.draftID.rawValue)
+        else { return nil }
+        let detail = message[Key.detail.rawValue] as? String
+        guard WatchCodexConversationWireValidation.isValidDetail(detail) else { return nil }
+        let resolvedTarget: WatchCodexConversationTarget?
+        if let payload = message[Key.resolvedCodexConversationTargetPayload.rawValue] as? String {
+            guard let target = decodedPayload(
+                WatchCodexConversationTarget.self,
+                from: payload,
+                maximumEncodedByteCount: WatchCodexConversationWireValidation
+                    .maximumTargetPayloadByteCount
+            ) else {
+                return nil
+            }
+            resolvedTarget = target
+        } else {
+            resolvedTarget = nil
+        }
+        guard accepted == (resolvedTarget != nil) else { return nil }
+        return (accepted, submissionID, draftID, resolvedTarget, detail)
     }
 
     static func codexReplySubmitMessage(
@@ -499,9 +807,10 @@ enum WatchRemoteProtocol {
         profileRevision: Int,
         intent: WatchVoiceIntent,
         codexTaskIdentity: WatchCodexTaskIdentity?,
+        codexConversationTarget: WatchCodexConversationTarget?,
         finalSequence: UInt64?
     )? {
-        guard kind == .voiceStart || kind == .voiceStop,
+        guard kind == .voiceStart || kind == .voiceStop || kind == .voiceCancel,
               let streamID = streamID(from: message, kind: kind),
               let profileRevision = integer(
                   in: message,
@@ -512,11 +821,18 @@ enum WatchRemoteProtocol {
               let intent = WatchVoiceIntent(rawValue: rawIntent)
         else { return nil }
         let identity = codexTaskIdentity(from: message)
+        let conversationTarget = codexConversationTarget(from: message)
         let hasAnyIdentityField = message[Key.threadID.rawValue] != nil
             || message[Key.turnID.rawValue] != nil
             || message[Key.taskRevision.rawValue] != nil
-        guard acceptsVoiceTargetShape(intent: intent, identity: identity),
-              (intent == .codexTask || !hasAnyIdentityField)
+        let hasConversationTargetField = message[Key.codexConversationTargetPayload.rawValue] != nil
+        guard acceptsVoiceTargetShape(
+            intent: intent,
+            identity: identity,
+            conversationTarget: conversationTarget
+        ),
+        (intent == .codexTask || !hasAnyIdentityField),
+        (intent == .codexConversation || !hasConversationTargetField)
         else { return nil }
         let rawFinalSequence = message[Key.finalSequence.rawValue]
         let finalSequence = unsignedInteger(
@@ -524,8 +840,15 @@ enum WatchRemoteProtocol {
             key: Key.finalSequence.rawValue
         )
         if rawFinalSequence != nil, finalSequence == nil { return nil }
-        if kind == .voiceStart, rawFinalSequence != nil { return nil }
-        return (streamID, profileRevision, intent, identity, finalSequence)
+        if kind != .voiceStop, rawFinalSequence != nil { return nil }
+        return (
+            streamID,
+            profileRevision,
+            intent,
+            identity,
+            conversationTarget,
+            finalSequence
+        )
     }
 
     static func codexTaskIdentity(from message: [String: Any]) -> WatchCodexTaskIdentity? {
@@ -536,13 +859,32 @@ enum WatchRemoteProtocol {
         )
     }
 
+    static func codexConversationTarget(
+        from message: [String: Any]
+    ) -> WatchCodexConversationTarget? {
+        guard let payload = message[Key.codexConversationTargetPayload.rawValue] as? String else {
+            return nil
+        }
+        return decodedPayload(
+            WatchCodexConversationTarget.self,
+            from: payload,
+            maximumEncodedByteCount: WatchCodexConversationWireValidation
+                .maximumTargetPayloadByteCount
+        )
+    }
+
     private static func acceptsVoiceTargetShape(
         intent: WatchVoiceIntent,
-        identity: WatchCodexTaskIdentity?
+        identity: WatchCodexTaskIdentity?,
+        conversationTarget: WatchCodexConversationTarget?
     ) -> Bool {
         switch intent {
-        case .foregroundDictation: return identity == nil
-        case .codexTask: return identity != nil
+        case .foregroundDictation:
+            return identity == nil && conversationTarget == nil
+        case .codexTask:
+            return identity != nil && conversationTarget == nil
+        case .codexConversation:
+            return identity == nil && conversationTarget?.kind == .existing
         }
     }
 
@@ -554,6 +896,16 @@ enum WatchRemoteProtocol {
         values[Key.threadID.rawValue] = identity.threadID
         values[Key.turnID.rawValue] = identity.turnID
         values[Key.taskRevision.rawValue] = identity.revision
+    }
+
+    private static func add(
+        conversationTarget: WatchCodexConversationTarget?,
+        to values: inout [String: Any]
+    ) {
+        guard let conversationTarget,
+              let payload = encodedPayload(conversationTarget)
+        else { return }
+        values[Key.codexConversationTargetPayload.rawValue] = payload
     }
 
     static func favorites(from message: [String: Any]) -> [WatchRemoteCommand]? {
@@ -674,6 +1026,23 @@ enum WatchRemoteProtocol {
         return (message[key] as? NSNumber)?.boolValue
     }
 
+    private static func canonicalUUID(in message: [String: Any], key: String) -> UUID? {
+        guard let rawValue = message[key] as? String,
+              let value = UUID(uuidString: rawValue),
+              value.uuidString == rawValue
+        else { return nil }
+        return value
+    }
+
+    private static func canonicalOptionalUUID(
+        in message: [String: Any],
+        key: String
+    ) -> (isValid: Bool, value: UUID?) {
+        guard message[key] != nil else { return (true, nil) }
+        guard let value = canonicalUUID(in: message, key: key) else { return (false, nil) }
+        return (true, value)
+    }
+
     private static func unsignedInteger(in message: [String: Any], key: String) -> UInt64? {
         if let value = message[key] as? UInt64 { return value }
         if let value = message[key] as? Int, value >= 0 { return UInt64(value) }
@@ -696,8 +1065,13 @@ enum WatchRemoteProtocol {
 
     private static func decodedPayload<T: Decodable>(
         _ type: T.Type,
-        from encoded: String
+        from encoded: String,
+        maximumEncodedByteCount: Int? = nil
     ) -> T? {
+        if let maximumEncodedByteCount,
+           encoded.utf8.count > maximumEncodedByteCount {
+            return nil
+        }
         guard let data = Data(base64Encoded: encoded) else { return nil }
         return try? JSONDecoder().decode(type, from: data)
     }

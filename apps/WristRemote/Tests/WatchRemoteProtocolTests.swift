@@ -2,6 +2,32 @@ import XCTest
 @testable import WristRemote
 
 final class WatchRemoteProtocolTests: XCTestCase {
+    func testVoiceCancellationIsNeverDecodedAsSubmission() throws {
+        let stream = UUID()
+        let identity = WatchCodexTaskIdentity(threadID: "task-example", turnID: "turn-example", revision: 1)!
+        let message = try XCTUnwrap(WatchRemoteProtocol.voiceCancelMessage(
+            streamID: stream, profileRevision: 7, intent: .codexTask,
+            codexTaskIdentity: identity
+        ))
+        let decoded = try XCTUnwrap(WatchRemoteProtocol.voiceEvent(from: message, kind: .voiceCancel))
+        XCTAssertEqual(decoded.streamID, stream)
+        XCTAssertEqual(decoded.codexTaskIdentity, identity)
+        XCTAssertNil(decoded.finalSequence)
+        XCTAssertNil(WatchRemoteProtocol.voiceEvent(from: message, kind: .voiceStop))
+        XCTAssertNil(WatchRemoteProtocol.voiceEvent(from: message, kind: .voiceStart))
+    }
+
+    func testVoiceCancellationRejectsMissingTargetAndFinalSequence() throws {
+        XCTAssertNil(WatchRemoteProtocol.voiceCancelMessage(
+            streamID: UUID(), profileRevision: 7, intent: .codexConversation
+        ))
+        var message = try XCTUnwrap(WatchRemoteProtocol.voiceCancelMessage(
+            streamID: UUID(), profileRevision: 7, intent: .foregroundDictation
+        ))
+        message[WatchRemoteProtocol.Key.finalSequence.rawValue] = 3
+        XCTAssertNil(WatchRemoteProtocol.voiceEvent(from: message, kind: .voiceCancel))
+    }
+
     func testProtocolVersionIsSeven() {
         XCTAssertEqual(WatchRemoteProtocol.version, 7)
     }
@@ -418,11 +444,24 @@ final class WatchRemoteProtocolTests: XCTestCase {
         XCTAssertNil(WatchRemoteProtocol.requestID(from: context))
     }
 
+    func testApplicationContextCarriesExplicitInternetRelayTombstone() {
+        let context = WatchRemoteProtocol.applicationContext(
+            status: .unavailable,
+            favorites: WatchRemoteCommand.defaultFavorites,
+            codexTaskStateRevision: 0,
+            internetRelayProvisioningCleared: true
+        )
+
+        XCTAssertTrue(WatchRemoteProtocol.isInternetRelayProvisioningCleared(in: context))
+        XCTAssertNil(context[WatchRemoteProtocol.Key.internetRelayProvisioning.rawValue])
+        XCTAssertFalse(WatchRemoteProtocol.isInternetRelayProvisioningCleared(in: [:]))
+    }
+
     func testCodexTaskSnapshotRoundTripsAsLiveMessageAndPersistedContext() throws {
         let snapshot = WatchCodexTaskSnapshot(
             threadID: "thr_task_123",
             turnID: "turn-42",
-            cwd: "/workspace/wrist-remote-example",
+            workspaceLabel: "/workspace/wrist-remote-example",
             title: "Example task",
             summary: "Example result",
             state: .completed,
@@ -444,6 +483,11 @@ final class WatchRemoteProtocolTests: XCTestCase {
         )
         XCTAssertEqual(WatchRemoteProtocol.kind(from: context), .status)
         XCTAssertEqual(WatchRemoteProtocol.codexTask(from: context), snapshot)
+        XCTAssertEqual(snapshot.workspaceLabel, "wrist-remote-example")
+        let encodedSnapshot = try JSONEncoder().encode(snapshot)
+        let encodedText = String(decoding: encodedSnapshot, as: UTF8.self)
+        XCTAssertFalse(encodedText.contains("/workspace/"))
+        XCTAssertFalse(encodedText.contains("\"cwd\""))
         XCTAssertEqual(
             WatchRemoteProtocol.codexTaskUpdate(from: context),
             .snapshot(snapshot, stateRevision: 12)
@@ -483,7 +527,7 @@ final class WatchRemoteProtocolTests: XCTestCase {
         XCTAssertNil(WatchRemoteProtocol.codexTaskUpdate(from: contradictory))
     }
 
-    func testVoiceOutcomeRoundTripsAsLiveMessageAndPersistedContext() throws {
+    func testVoiceOutcomeIsLiveOnlyAndNeverPersistsInApplicationContext() throws {
         let outcome = WatchVoiceOutcome(
             sessionID: UUID().uuidString,
             intent: .codexTask,
@@ -506,7 +550,8 @@ final class WatchRemoteProtocolTests: XCTestCase {
             voiceOutcome: outcome
         )
         XCTAssertEqual(WatchRemoteProtocol.kind(from: context), .status)
-        XCTAssertEqual(WatchRemoteProtocol.voiceOutcome(from: context), outcome)
+        XCTAssertNil(WatchRemoteProtocol.voiceOutcome(from: context))
+        XCTAssertNil(context[WatchRemoteProtocol.Key.voiceOutcomePayload.rawValue])
 
         var wrongVersion = live
         wrongVersion[WatchRemoteProtocol.Key.protocolVersion.rawValue] = 3
@@ -515,6 +560,53 @@ final class WatchRemoteProtocolTests: XCTestCase {
         var malformed = live
         malformed[WatchRemoteProtocol.Key.voiceOutcomePayload.rawValue] = "not-base64"
         XCTAssertNil(WatchRemoteProtocol.voiceOutcome(from: malformed))
+    }
+
+    func testDirectCodexVoiceOutcomesContainNoWatchDraftOrTranscript() throws {
+        let taskIdentity = try XCTUnwrap(WatchCodexTaskIdentity(
+            threadID: "thr_direct_voice",
+            turnID: "turn_direct_voice",
+            revision: 17
+        ))
+        let taskOutcome = WatchVoiceOutcome(
+            sessionID: UUID().uuidString,
+            intent: .codexTask,
+            threadID: taskIdentity.threadID,
+            turnID: taskIdentity.turnID,
+            taskRevision: taskIdentity.revision,
+            kind: .delivered,
+            text: nil,
+            detail: "已排入当前 Codex 聊天",
+            localeIdentifier: "zh-CN"
+        )
+        XCTAssertTrue(taskOutcome.hasValidWireShape)
+        XCTAssertNil(taskOutcome.text)
+        XCTAssertFalse(taskOutcome.hasCodexConversationDraftFields)
+        XCTAssertEqual(
+            WatchRemoteProtocol.voiceOutcome(
+                from: try XCTUnwrap(WatchRemoteProtocol.voiceOutcomeMessage(taskOutcome))
+            ),
+            taskOutcome
+        )
+
+        let conversationOutcome = WatchVoiceOutcome(
+            sessionID: UUID().uuidString,
+            intent: .codexConversation,
+            threadID: nil,
+            kind: .delivered,
+            text: nil,
+            detail: "已排入所选 Codex 会话",
+            localeIdentifier: "zh-CN"
+        )
+        XCTAssertTrue(conversationOutcome.hasValidWireShape)
+        XCTAssertNil(conversationOutcome.text)
+        XCTAssertFalse(conversationOutcome.hasCodexConversationDraftFields)
+        XCTAssertEqual(
+            WatchRemoteProtocol.voiceOutcome(
+                from: try XCTUnwrap(WatchRemoteProtocol.voiceOutcomeMessage(conversationOutcome))
+            ),
+            conversationOutcome
+        )
     }
 
     func testCodexThreadIdentifierAcceptsSafeNonUUIDValuesAndRejectsShellLikeInput() {
@@ -974,6 +1066,48 @@ final class WatchRemoteProtocolTests: XCTestCase {
             contiguousThrough: 2
         )
         XCTAssertEqual(tracker.accept(rejected), .rejected)
+    }
+
+    func testBridgeAudioReceiptAdvancesOnlyAfterConsumerAcceptance() {
+        var gate = WristBridgeAudioReceiveGate()
+        var deliveryCount = 0
+
+        let rejected = gate.receive(sequence: 0) {
+            deliveryCount += 1
+            return false
+        }
+        XCTAssertEqual(rejected, WristBridgeAudioDeliveryReceipt(
+            sequence: 0,
+            accepted: false,
+            contiguousThrough: nil
+        ))
+        XCTAssertEqual(deliveryCount, 1)
+        XCTAssertNil(gate.contiguousThrough)
+
+        let accepted = gate.receive(sequence: 0) {
+            deliveryCount += 1
+            return true
+        }
+        XCTAssertEqual(accepted, WristBridgeAudioDeliveryReceipt(
+            sequence: 0,
+            accepted: true,
+            contiguousThrough: 0
+        ))
+        XCTAssertEqual(deliveryCount, 2)
+
+        let gap = gate.receive(sequence: 2) {
+            XCTFail("A sequence gap must not reach the audio consumer")
+            return true
+        }
+        XCTAssertFalse(gap.accepted)
+        XCTAssertEqual(gap.contiguousThrough, 0)
+
+        let duplicate = gate.receive(sequence: 0) {
+            XCTFail("An acknowledged retry must be idempotent")
+            return true
+        }
+        XCTAssertTrue(duplicate.accepted)
+        XCTAssertEqual(duplicate.contiguousThrough, 0)
     }
 
     func testAudioMailboxAtomicallyIncludesCapturedTailBeforeClosing() {

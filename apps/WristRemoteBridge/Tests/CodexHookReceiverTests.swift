@@ -135,13 +135,14 @@ final class CodexHookReceiverTests: XCTestCase {
         let resolvedAuthorization = omitAuthorization
             ? nil
             : authorization ?? "Bearer \(bearerToken)"
-        var data = Data((
-            "\(method) \(route) HTTP/1.1\r\n"
-                + "Host: 127.0.0.1:60928\r\n"
-                + "Content-Type: \(contentType)\r\n"
-                + (resolvedAuthorization.map { "Authorization: \($0)\r\n" } ?? "")
-                + "Content-Length: \(body.count)\r\n\r\n"
-        ).utf8)
+        var headers = [
+            "\(method) \(route) HTTP/1.1",
+            "Host: 127.0.0.1:60928",
+            "Content-Type: \(contentType)",
+        ]
+        if let resolvedAuthorization { headers.append("Authorization: \(resolvedAuthorization)") }
+        headers.append("Content-Length: \(body.count)")
+        var data = Data((headers.joined(separator: "\r\n") + "\r\n\r\n").utf8)
         data.append(body)
         return data
     }

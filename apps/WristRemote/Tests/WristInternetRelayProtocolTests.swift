@@ -174,6 +174,85 @@ final class WristInternetRelayProtocolTests: XCTestCase {
         }
     }
 
+    func testPrivateOnlyBuildDisablesOtherwiseOperationalRelay() throws {
+        let operational = try XCTUnwrap(URL(string: "https://relay.example.com"))
+        XCTAssertFalse(WristInternetRelayConfiguration.isEnabled(
+            baseURL: operational,
+            privateOnly: true
+        ))
+        XCTAssertTrue(WristInternetRelayConfiguration.isEnabled(
+            baseURL: operational,
+            privateOnly: false
+        ))
+        XCTAssertFalse(WristInternetRelayConfiguration.isEnabled(
+            baseURL: try XCTUnwrap(URL(string: "https://relay.example.invalid")),
+            privateOnly: false
+        ))
+    }
+
+    func testPrivateOnlyMetadataParserRequiresExplicitFalseOptOut() {
+        for value in ["0", "false", "no", " FALSE ", "\n0\t"] {
+            XCTAssertFalse(
+                WristInternetRelayConfiguration.privateOnlyValue(from: value),
+                String(describing: value)
+            )
+        }
+        for value in [
+            "1", "true", "yes", " YES ", "", " ", "maybe",
+            "$(WRISTREMOTE_PRIVATE_ONLY)", "${WRISTREMOTE_PRIVATE_ONLY}"
+        ] {
+            XCTAssertTrue(
+                WristInternetRelayConfiguration.privateOnlyValue(from: value),
+                String(describing: value)
+            )
+        }
+        XCTAssertFalse(WristInternetRelayConfiguration.privateOnlyValue(from: false))
+        XCTAssertTrue(WristInternetRelayConfiguration.privateOnlyValue(from: true))
+        XCTAssertFalse(WristInternetRelayConfiguration.privateOnlyValue(from: NSNumber(value: 0)))
+        XCTAssertTrue(WristInternetRelayConfiguration.privateOnlyValue(from: NSNumber(value: 2)))
+        XCTAssertTrue(WristInternetRelayConfiguration.privateOnlyValue(from: nil))
+    }
+
+    func testUnavailableOrCorruptRevocationMarkerBlocksCredentialRecovery() throws {
+        struct Marker: Codable {
+            let isCleared: Bool
+        }
+
+        let revoked = Marker(isCleared: true)
+        XCTAssertTrue(WristInternetRelayKeychain.blocksCredentialRecovery(
+            for: .loaded(revoked),
+            isRevoked: { $0.isCleared }
+        ))
+        XCTAssertFalse(WristInternetRelayKeychain.blocksCredentialRecovery(
+            for: WristInternetRelayKeychain.LoadResult<Marker>.notFound,
+            isRevoked: { $0.isCleared }
+        ))
+        XCTAssertTrue(WristInternetRelayKeychain.blocksCredentialRecovery(
+            for: WristInternetRelayKeychain.LoadResult<Marker>.unavailable,
+            isRevoked: { $0.isCleared }
+        ))
+
+        let corrupt = WristInternetRelayKeychain.classifyLoad(
+            Marker.self,
+            copyStatus: errSecSuccess,
+            data: Data("not-json".utf8)
+        )
+        XCTAssertTrue(WristInternetRelayKeychain.blocksCredentialRecovery(
+            for: corrupt,
+            isRevoked: { $0.isCleared }
+        ))
+
+        let locked = WristInternetRelayKeychain.classifyLoad(
+            Marker.self,
+            copyStatus: errSecInteractionNotAllowed,
+            data: nil
+        )
+        XCTAssertTrue(WristInternetRelayKeychain.blocksCredentialRecovery(
+            for: locked,
+            isRevoked: { $0.isCleared }
+        ))
+    }
+
     func testInternetAudioBatchingAdaptsToBacklogAndFinalTail() {
         XCTAssertFalse(WristInternetAudioBatchingPolicy.shouldFlush(
             bufferedPacketCount: 4,

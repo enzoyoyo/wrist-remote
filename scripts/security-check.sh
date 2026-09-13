@@ -199,6 +199,7 @@ ALLOWED_URL_HOST_SUFFIXES = {
     "apache.org",
     "apple.com",
     "cloudflare.com",
+    "example.com",
     "example.invalid",
     "example",
     "fsf.org",
@@ -211,6 +212,8 @@ ALLOWED_URL_HOST_SUFFIXES = {
     "openai.com",
     "opensource.org",
     "spdx.org",
+    "tailscale.com",
+    "termius.com",
     "test",
     "w3.org",
 }
@@ -331,6 +334,18 @@ def scan_urls(relative: str, data: bytes, scope: str) -> None:
             report(scope, "unparseable HTTPS URL")
             continue
         if not host or host == "127.0.0.1":
+            continue
+        # Product-owned first-party transcription endpoint. This exact public
+        # URL is not a private deployment or chat link; do not allow the host,
+        # query strings, account URLs or arbitrary paths as a broad exception.
+        if url.rstrip(")") == "https://" + "chatgpt.com/backend-api/transcribe":
+            continue
+        # Exact primary references, only in the signing guide. Never allow an
+        # entire user account, query string, or unrelated document by domain.
+        if relative in {"docs/en/signing.md", "docs/zh-CN/signing.md"} and url.rstrip(")") in {
+            "https://" + "github.com/LiveContainer/LiveContainer",
+            "https://" + "livecontainer.github.io/docs/faq",
+        }:
             continue
         if not any(
             host == suffix or host.endswith("." + suffix)

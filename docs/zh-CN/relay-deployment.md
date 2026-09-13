@@ -2,7 +2,7 @@
 
 [English](../en/relay-deployment.md)
 
-Relay 是可选功能。默认 `.invalid` URL 会禁用外网路径；局域网遥控不需要 Cloudflare。
+> **不属于当前个人版。** 当前产物要求 `WRISTREMOTE_PRIVATE_ONLY = YES` 与预留 `.invalid` Relay URL，因此无法使用下述流程；它只支持局域网和仅接受官方 IP 的 Tailscale 私网，不使用 Funnel 或公网回退。以下内容保留用于另行安全审查的 Relay 版本；仓库存在 Relay 源码或测试，不代表 private-only 产物启用了 Relay。
 
 ## 安全模型
 
@@ -129,7 +129,7 @@ Relay 同时识别根路径以及可选的 `/wristrelay` 前缀：
 3. 单击、双击、长按语义不受 WAN 延迟影响。
 4. 断网期间的按键不会在恢复后补执行。
 5. Mac 离线得到明确失败。
-6. 中文普通前台语音完成识别并立即注入；Codex 语音完成草稿、确认和最终回执。
+6. 中文普通前台听写完成识别并立即注入。Codex 语音发送 Watch 原始音频；Mac 写入仅文件所有者可读写的临时 WAV，使用已登录 Codex 账号进行第一方联网转写，再次校验目标后经本机 app-server 排入文字。临时或部分音频会被删除；音频包 ACK 丢失或断线必须 fail closed，绝不自动重放。
 7. 恢复 LAN 后自动切回。
 
 测试前使用无破坏性的动作；CI 和 `/healthz` 不能替代这些步骤。

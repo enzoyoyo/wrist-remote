@@ -126,7 +126,12 @@ xcodebuild \
   -derivedDataPath "$TEMP_ROOT/WatchDerivedData" \
   -parallel-testing-enabled NO \
   -only-testing:WristRemoteWatchUITests/WristRemoteWatchUITests/testCodexHomeIsFirstAndAllRemotePagesRemainReachable \
+  -only-testing:WristRemoteWatchUITests/WristRemoteWatchUITests/testCodexConversationDestinationIsExplicitlySelectable \
+  -only-testing:WristRemoteWatchUITests/WristRemoteWatchUITests/testConversationPickerAlwaysHasAnAppOwnedEscapePath \
   -only-testing:WristRemoteWatchUITests/WristRemoteWatchUITests/testExplicitPagePickerNeverStartsFromARemoteButton \
+  -only-testing:WristRemoteWatchUITests/WristRemoteWatchUITests/testPopulatedLongTitleLayoutKeepsVoiceAndRepeatedCloseReachable \
+  -only-testing:WristRemoteWatchUITests/WristRemoteWatchUITests/testLargeTypeKeepsVoiceAndPickerEscapeReachable \
+  -only-testing:WristRemoteWatchUITests/WristRemoteWatchUITests/testSelectedDestinationKeepsItsFullReadableIdentity \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGNING_REQUIRED=NO \
   test

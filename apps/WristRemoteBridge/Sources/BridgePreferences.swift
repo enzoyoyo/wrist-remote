@@ -1,7 +1,13 @@
 import Foundation
 
+enum TrustedIdentityFingerprintLoadResult: Equatable {
+    case loaded(Set<String>)
+    case notFound
+    case unavailable
+}
+
 protocol TrustedIdentityFingerprintStoring {
-    func load() -> Set<String>
+    func load() -> TrustedIdentityFingerprintLoadResult
 
     @discardableResult
     func save(_ fingerprints: Set<String>) -> Bool
@@ -15,14 +21,19 @@ struct KeychainTrustedIdentityFingerprintStore: TrustedIdentityFingerprintStorin
         service = "\(bundleIdentifier ?? "dev.wristremote.bridge").trusted-identities"
     }
 
-    func load() -> Set<String> {
-        Set(
-            WristInternetRelayKeychain.load(
-                [String].self,
-                account: Self.account,
-                service: service
-            ) ?? []
-        )
+    func load() -> TrustedIdentityFingerprintLoadResult {
+        switch WristInternetRelayKeychain.loadResult(
+            [String].self,
+            account: Self.account,
+            service: service
+        ) {
+        case let .loaded(fingerprints):
+            return .loaded(Set(fingerprints))
+        case .notFound:
+            return .notFound
+        case .unavailable:
+            return .unavailable
+        }
     }
 
     @discardableResult
@@ -42,6 +53,7 @@ final class BridgePreferences {
     static let codexPinnedThreadIDKey = "codexPinnedThreadID"
     static let codexTaskStateRevisionKey = "codexTaskStateRevision"
     static let watchActionProfileKey = "watchActionProfile"
+    static let tailnetAccessEnabledKey = "tailnetAccessEnabled"
 
     private let defaults: UserDefaults
     private let trustedIdentityStore: any TrustedIdentityFingerprintStoring
@@ -59,12 +71,10 @@ final class BridgePreferences {
     }
 
     var trustedIdentityFingerprints: Set<String> {
-        get {
-            trustedIdentityStore.load()
+        guard case let .loaded(fingerprints) = trustedIdentityStore.load() else {
+            return []
         }
-        set {
-            trustedIdentityStore.save(newValue)
-        }
+        return fingerprints
     }
 
     var applicationProfiles: [BridgeApplicationProfile] {
@@ -117,6 +127,11 @@ final class BridgePreferences {
         }
     }
 
+    var tailnetAccessEnabled: Bool {
+        get { defaults.bool(forKey: Self.tailnetAccessEnabledKey) }
+        set { defaults.set(newValue, forKey: Self.tailnetAccessEnabledKey) }
+    }
+
     /// A process-independent ordering token for both task snapshots and clear
     /// tombstones. It is intentionally separate from a Codex turn revision.
     func nextCodexTaskStateRevision() -> Int {
@@ -131,17 +146,35 @@ final class BridgePreferences {
         trustedIdentityFingerprints.contains(fingerprint)
     }
 
-    func trust(_ fingerprint: String) {
-        var fingerprints = trustedIdentityFingerprints
+    @discardableResult
+    func trust(_ fingerprint: String) -> Bool {
+        var fingerprints: Set<String>
+        switch trustedIdentityStore.load() {
+        case let .loaded(existing):
+            fingerprints = existing
+        case .notFound:
+            fingerprints = []
+        case .unavailable:
+            return false
+        }
         fingerprints.insert(fingerprint)
-        trustedIdentityFingerprints = fingerprints
+        return trustedIdentityStore.save(fingerprints)
     }
 
     private func migrateLegacyTrustedIdentityFingerprints() {
         guard let legacyFingerprints = defaults.stringArray(
             forKey: Self.trustedIdentityFingerprintsKey
         ) else { return }
-        let migrated = trustedIdentityStore.load().union(legacyFingerprints)
+        let existing: Set<String>
+        switch trustedIdentityStore.load() {
+        case let .loaded(fingerprints):
+            existing = fingerprints
+        case .notFound:
+            existing = []
+        case .unavailable:
+            return
+        }
+        let migrated = existing.union(legacyFingerprints)
         guard trustedIdentityStore.save(migrated) else { return }
         defaults.removeObject(forKey: Self.trustedIdentityFingerprintsKey)
     }

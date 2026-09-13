@@ -128,6 +128,7 @@ struct BridgeVoiceSession: Equatable {
     }
 
     private(set) var phase: Phase = .idle
+    private(set) var startToken: UUID?
 
     var hasInFlightSession: Bool {
         phase != .idle
@@ -151,11 +152,13 @@ struct BridgeVoiceSession: Equatable {
             sessionID: sessionID,
             profileRevision: profileRevision
         ))
+        startToken = UUID()
         return true
     }
 
-    mutating func completeStart(succeeded: Bool) -> Identity? {
-        guard case let .starting(identity) = phase else { return nil }
+    mutating func completeStart(token: UUID, succeeded: Bool) -> Identity? {
+        guard startToken == token, case let .starting(identity) = phase else { return nil }
+        startToken = nil
         phase = succeeded ? .active(identity) : .idle
         return identity
     }
@@ -198,6 +201,7 @@ struct BridgeVoiceSession: Equatable {
             acceptedProfileRevision: acceptedProfileRevision
         ) else { return false }
         phase = .idle
+        startToken = nil
         return true
     }
 
@@ -215,5 +219,36 @@ struct BridgeVoiceSession: Equatable {
               acceptedProfileRevision == identity.profileRevision
         else { return false }
         return true
+    }
+}
+
+/// Main-actor reservation across asynchronous destination validation. A
+/// cancellation invalidates the ticket even before audio resources exist.
+struct BridgeVoiceStartReservation {
+    struct Ticket: Equatable {
+        let sessionID: String
+        let nonce = UUID()
+    }
+    private(set) var pending: Ticket?
+
+    mutating func reserve(sessionID: String) -> Ticket? {
+        guard pending == nil else { return nil }
+        let ticket = Ticket(sessionID: sessionID)
+        pending = ticket
+        return ticket
+    }
+
+    mutating func consume(_ ticket: Ticket) -> Bool {
+        guard pending == ticket else { return false }
+        pending = nil
+        return true
+    }
+
+    mutating func cancel(sessionID: String? = nil) {
+        if sessionID == nil || pending?.sessionID == sessionID { pending = nil }
+    }
+
+    mutating func discard(_ ticket: Ticket) {
+        if pending == ticket { pending = nil }
     }
 }
