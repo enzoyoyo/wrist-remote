@@ -7,6 +7,17 @@ readonly SCRIPT_DIR="${0:A:h}"
 readonly REPO_ROOT="${SCRIPT_DIR:h}"
 readonly LOCAL_CONFIG="$REPO_ROOT/Config/Local.xcconfig"
 
+unsigned_mode=0
+if (( $# > 1 )); then
+  print -u2 -- 'usage: scripts/doctor.sh [--unsigned]'
+  exit 64
+fi
+case "${1:-}" in
+  '') ;;
+  --unsigned) unsigned_mode=1 ;;
+  *) print -u2 -- 'usage: scripts/doctor.sh [--unsigned]'; exit 64 ;;
+esac
+
 failed=0
 check_command() {
   local command_name="$1"
@@ -67,6 +78,9 @@ if [[ -f "$LOCAL_CONFIG" ]]; then
       's/^[[:space:]]*WRISTREMOTE_EXISTING_INSTALL_REQUIRED[[:space:]]*=[[:space:]]*([^[:space:]#]+).*$/\1/p' \
       "$LOCAL_CONFIG" | /usr/bin/tail -n 1
   )"
+  # Match the shared configuration and installer default when no local
+  # override is present. Explicit invalid values must still fail closed.
+  existing_install_required="${existing_install_required:-NO}"
   existing_install_team_id="$(
     /usr/bin/sed -nE \
       's/^[[:space:]]*WRISTREMOTE_EXISTING_INSTALL_TEAM_ID[[:space:]]*=[[:space:]]*([^[:space:]#]+).*$/\1/p' \
@@ -107,6 +121,33 @@ if [[ -f "$LOCAL_CONFIG" ]]; then
         && "$watch_bundle_identifier_normalized" != *'.example.'* \
         && "$watch_bundle_identifier_normalized" != *'.invalid'* ]]; then
     mobile_identifiers_non_placeholder=YES
+  fi
+
+  if (( unsigned_mode )); then
+    # Simulator builds and tests do not use a signing identity. This explicit
+    # mode is never selected by the Mac or real-device installation scripts.
+    if [[ "${existing_install_required:u}" != YES \
+          && "${existing_install_required:u}" != NO ]]; then
+      print -u2 -- "invalid  WRISTREMOTE_EXISTING_INSTALL_REQUIRED must be YES or NO"
+      failed=1
+    fi
+    if [[ ! "$bundle_prefix" =~ '^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)+$' ]]; then
+      print -u2 -- "invalid  WRISTREMOTE_BUNDLE_PREFIX must use reverse-domain format"
+      failed=1
+    fi
+    if [[ "$mobile_identifiers_present" == YES \
+          && "$mobile_identifiers_shape_valid" != YES ]]; then
+      print -u2 -- "invalid  explicit iPhone and Watch Bundle identifiers must use reverse-domain format and correct nesting"
+      failed=1
+    fi
+    if [[ -n "$bridge_bundle_identifier" \
+          && ! "$bridge_bundle_identifier" =~ '^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)+$' ]]; then
+      print -u2 -- "invalid  WRISTREMOTE_BRIDGE_BUNDLE_IDENTIFIER must use reverse-domain format"
+      failed=1
+    fi
+    (( failed == 0 )) || exit 1
+    print -- "Unsigned build/test environment checks passed; signing and installed identities are not verified."
+    exit 0
   fi
 
   if [[ "${existing_install_required:u}" != YES \

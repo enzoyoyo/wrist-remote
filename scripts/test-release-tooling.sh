@@ -254,6 +254,100 @@ check "doctor requires the real-device dry-run for controlled upgrades" \
   contains "$doctor_source" 'scripts/install-devices.command --dry-run before any device install'
 check "doctor rejects an implicit placeholder Bridge identity during controlled upgrade" \
   contains "$doctor_source" 'requires the exact existing Mac Bridge Bundle identifier'
+
+# Exercise the real doctor from an isolated repository, never the developer's
+# ignored Local.xcconfig. Tool stubs keep this independent of signing, connected
+# devices, the installed Xcode, and the Node version on the test host.
+readonly DOCTOR_FIXTURE="$TEMP_ROOT/doctor"
+/bin/mkdir -p "$DOCTOR_FIXTURE/repo/scripts" "$DOCTOR_FIXTURE/repo/Config" "$DOCTOR_FIXTURE/bin"
+/bin/cp "$SCRIPT_DIR/doctor.sh" "$DOCTOR_FIXTURE/repo/scripts/doctor.sh"
+for doctor_tool in xcodebuild xcrun swift xcodegen npm git rg node uname; do
+  /bin/cat > "$DOCTOR_FIXTURE/bin/$doctor_tool" <<'MOCK'
+#!/bin/zsh -f
+case "${0:t}" in
+  uname)
+    [[ "$*" == '-s' ]] || exit 64
+    print -- Darwin
+    ;;
+  node)
+    [[ "${1:-}" == '-e' ]] || exit 64
+    exit 0
+    ;;
+  *)
+    # Doctor may verify these commands exist, but must not build, sign, or
+    # contact a device while checking the environment.
+    exit 70
+    ;;
+esac
+MOCK
+  /bin/chmod 0755 "$DOCTOR_FIXTURE/bin/$doctor_tool"
+done
+
+reset_doctor_fixture() {
+  /bin/cp "$REPO_ROOT/Config/Local.xcconfig.example" "$DOCTOR_FIXTURE/repo/Config/Local.xcconfig"
+  /bin/chmod 0600 "$DOCTOR_FIXTURE/repo/Config/Local.xcconfig"
+}
+
+run_doctor_fixture() {
+  if /usr/bin/env -i PATH="$DOCTOR_FIXTURE/bin:/usr/bin:/bin" \
+    /bin/zsh -f "$DOCTOR_FIXTURE/repo/scripts/doctor.sh" "$@" \
+    > "$DOCTOR_FIXTURE/output.log" 2>&1; then
+    doctor_fixture_status=0
+  else
+    doctor_fixture_status=$?
+  fi
+  doctor_fixture_output="$(<"$DOCTOR_FIXTURE/output.log")"
+}
+
+reset_doctor_fixture
+run_doctor_fixture --unsigned
+check "unsigned doctor accepts the unchanged example configuration used by CI" \
+  test "$doctor_fixture_status" -eq 0
+run_doctor_fixture
+check "default doctor still rejects example signing configuration" \
+  test "$doctor_fixture_status" -ne 0
+check "default doctor reports the placeholder Team as an install configuration error" \
+  contains "$doctor_fixture_output" 'WRISTREMOTE_DEVELOPMENT_TEAM must be a 10-character Apple Developer Team ID'
+
+print -r -- 'WRISTREMOTE_EXISTING_INSTALL_REQUIRED = MAYBE' \
+  >> "$DOCTOR_FIXTURE/repo/Config/Local.xcconfig"
+run_doctor_fixture --unsigned
+check "unsigned doctor rejects an invalid existing-install flag" \
+  test "$doctor_fixture_status" -ne 0
+check "unsigned doctor explains that an existing-install flag must be YES or NO" \
+  contains "$doctor_fixture_output" 'WRISTREMOTE_EXISTING_INSTALL_REQUIRED must be YES or NO'
+
+reset_doctor_fixture
+/bin/cat >> "$DOCTOR_FIXTURE/repo/Config/Local.xcconfig" <<'CONFIG'
+WRISTREMOTE_IOS_BUNDLE_IDENTIFIER = dev.fixture.phone
+WRISTREMOTE_WATCH_BUNDLE_IDENTIFIER = dev.fixture.unrelated.watchkitapp
+CONFIG
+run_doctor_fixture --unsigned
+check "unsigned doctor rejects Watch identifiers not nested under the configured iPhone" \
+  test "$doctor_fixture_status" -ne 0
+check "unsigned doctor reports malformed mobile identity nesting" \
+  contains "$doctor_fixture_output" 'explicit iPhone and Watch Bundle identifiers must use reverse-domain format and correct nesting'
+
+reset_doctor_fixture
+run_doctor_fixture --not-a-doctor-option
+check "doctor rejects unknown options" test "$doctor_fixture_status" -ne 0
+run_doctor_fixture --unsigned --not-a-doctor-option
+check "unsigned doctor does not ignore trailing unknown options" test "$doctor_fixture_status" -ne 0
+run_doctor_fixture --unsigned unexpected-positional-argument
+check "unsigned doctor rejects unexpected positional arguments" test "$doctor_fixture_status" -ne 0
+
+# An omitted upgrade flag means NO, not malformed configuration. This uses a
+# synthetic Team and prefix, so the strict path is tested without local identity.
+readonly DOCTOR_TEST_ONLY_TEAM_ID='TEAMFIX123'
+/bin/cat > "$DOCTOR_FIXTURE/repo/Config/Local.xcconfig" <<'CONFIG'
+WRISTREMOTE_BUNDLE_PREFIX = dev.fixture.wrist
+CONFIG
+print -r -- "WRISTREMOTE_DEVELOPMENT_TEAM = $DOCTOR_TEST_ONLY_TEAM_ID" \
+  >> "$DOCTOR_FIXTURE/repo/Config/Local.xcconfig"
+run_doctor_fixture
+check "default doctor treats an omitted existing-install flag as NO" \
+  test "$doctor_fixture_status" -eq 0
+
 check "device installer does not print candidate UDIDs on ambiguity" \
   not_contains "$installer_source" "item.get('identifier', '无 UDID')"
 check "device installer does not echo an invalid requested UDID" \

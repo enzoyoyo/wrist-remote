@@ -8,7 +8,7 @@ readonly REPO_ROOT="${SCRIPT_DIR:h}"
 readonly TEMP_ROOT="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/WristRemoteTests.XXXXXX")"
 trap '/bin/rm -rf -- "$TEMP_ROOT"' EXIT
 
-"$SCRIPT_DIR/doctor.sh"
+"$SCRIPT_DIR/doctor.sh" --unsigned
 "$SCRIPT_DIR/test-release-tooling.sh"
 
 (
