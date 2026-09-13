@@ -33,7 +33,7 @@ The LAN listener binds to one concrete, non-publicly-routable address on an appr
 ## Requirements
 
 - macOS 13+, iOS 17+, and watchOS 10+.
-- Full Xcode, including installed iOS and watchOS Simulator runtimes, plus XcodeGen, Swift, Node.js 24+, and npm.
+- Full Xcode 26 or newer, including installed iOS and watchOS Simulator runtimes, plus XcodeGen, Swift, Node.js 24+, and npm. The Mac target requires the macOS 26 SDK to compile; runtime availability checks preserve its older supported deployment target. CI uses Xcode 26.3.
 - Device installation requires your Apple Developer Team and development-ready iPhone and Apple Watch.
 - Private-network fallback requires Tailscale on the paired iPhone and Mac in the same tailnet; the Watch itself does not join the tailnet.
 - The private-only build requires no Cloudflare account or public service.

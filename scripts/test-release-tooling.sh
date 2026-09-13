@@ -48,6 +48,18 @@ codeql_public_gates="$(python3 -c 'import pathlib, re, sys; text = pathlib.Path(
 check "both CodeQL jobs require public repository visibility" test "$codeql_public_gates" = "2"
 check "CodeQL does not depend on a manual enable variable" not_contains "$codeql_workflow" "ENABLE_CODEQL"
 
+apple_tools_action="$(<"$REPO_ROOT/.github/actions/setup-apple-tools/action.yml")"
+check "shared Apple tooling pins Xcode 26.3 instead of the runner default" \
+  contains "$apple_tools_action" 'readonly developer_dir=/Applications/Xcode_26.3.app/Contents/Developer'
+check "shared Apple tooling selects the pinned Xcode for its SDK checks" \
+  contains "$apple_tools_action" 'export DEVELOPER_DIR="$developer_dir"'
+check "shared Apple tooling exports the pinned Xcode to subsequent job steps" \
+  contains "$apple_tools_action" 'echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"'
+check "shared Apple tooling verifies the selected Xcode version" \
+  contains "$apple_tools_action" 'xcodebuild -version'
+check "shared Apple tooling verifies the selected SDK inventory" \
+  contains "$apple_tools_action" 'xcodebuild -showsdks'
+
 security_shebang="$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).read_text().splitlines()[0])' "$SCRIPT_DIR/security-check.sh")"
 check "security scanner uses Bash available on the Ubuntu CI image" test "$security_shebang" = "#!/usr/bin/env bash"
 check "security scanner parses with Bash" /bin/bash -n "$SCRIPT_DIR/security-check.sh"

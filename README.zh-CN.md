@@ -35,7 +35,7 @@ Apple Watch
 - macOS 13 或更新版本。
 - iOS 17 或更新版本。
 - watchOS 10 或更新版本。
-- 完整版 Xcode（含已安装的 iOS 与 watchOS Simulator runtime）、XcodeGen、Swift、Node.js 24+ 和 npm。
+- 完整版 Xcode 26 或更新版本（含已安装的 iOS 与 watchOS Simulator runtime）、XcodeGen、Swift、Node.js 24+ 和 npm。Mac 目标编译需要 macOS 26 SDK；运行时可用性检查仍保留较早系统的最低部署要求。CI 使用 Xcode 26.3。
 - 真机安装需要你自己的 Apple Developer Team、已开启开发者模式且与 Mac 建立开发连接的 iPhone 和 Apple Watch。
 - 私有网络备用链路要求已配对 iPhone 与 Mac 安装 Tailscale 并加入同一 tailnet；Watch 本身不加入 tailnet。
 - 仅私有网络构建不需要 Cloudflare 账号或公网服务。

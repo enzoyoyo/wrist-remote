@@ -21,6 +21,8 @@ Types under `apps/WristRemote/Shared` are not currently an external `public` API
 
 ## Common commands
 
+Build with Xcode 26 or newer: the Mac source requires the macOS 26 SDK even though newer speech APIs are guarded at runtime. CI pins Xcode 26.3 through a job-scoped `DEVELOPER_DIR`. `make build` and `make test` use `doctor.sh --unsigned`, so the example configuration can be used without a personal signing identity; installation and default `make doctor` retain strict identity checks.
+
 ```bash
 make setup       # tools, Local.xcconfig, XcodeGen, and npm ci
 make doctor      # read-only environment checks

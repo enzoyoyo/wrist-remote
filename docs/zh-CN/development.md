@@ -21,6 +21,8 @@ Xcode 工程、Generated Info.plist、DerivedData、Swift `.build`、`node_modul
 
 ## 常用命令
 
+使用 Xcode 26 或更新版本构建：即使新的语音 API 有运行时可用性保护，Mac 源码仍需要 macOS 26 SDK。CI 通过仅作用于任务的 `DEVELOPER_DIR` 固定 Xcode 26.3。`make build` 与 `make test` 使用 `doctor.sh --unsigned`，允许用示例配置完成不依赖个人签名的检查；安装入口和默认 `make doctor` 仍保留严格身份校验。
+
 ```bash
 make setup       # 工具、Local.xcconfig、XcodeGen 和 npm ci
 make doctor      # 只读环境检查

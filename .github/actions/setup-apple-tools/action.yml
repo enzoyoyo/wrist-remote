@@ -1,9 +1,23 @@
 name: Set up pinned Apple build tools
-description: Installs checksum-verified XcodeGen and ripgrep releases without Homebrew.
+description: Selects Xcode 26.3 and installs checksum-verified XcodeGen and ripgrep releases without Homebrew.
 
 runs:
   using: composite
   steps:
+    - name: Select Xcode 26.3 SDKs
+      shell: bash
+      run: |
+        set -euo pipefail
+        readonly developer_dir=/Applications/Xcode_26.3.app/Contents/Developer
+        test -d "$developer_dir"
+        # The macos-15 image defaults to Xcode 16.4, which cannot compile
+        # SpeechAnalyzer even behind a macOS 26 runtime availability check.
+        # Scope this selection to the job; do not change global xcode-select.
+        export DEVELOPER_DIR="$developer_dir"
+        xcodebuild -version
+        xcodebuild -showsdks
+        echo "DEVELOPER_DIR=$developer_dir" >> "$GITHUB_ENV"
+
     - name: Install XcodeGen 2.46.0
       shell: bash
       run: |
