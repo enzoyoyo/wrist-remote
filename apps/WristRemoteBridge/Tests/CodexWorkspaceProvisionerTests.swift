@@ -361,6 +361,18 @@ private func runGitAndCapture(_ arguments: [String]) throws -> String {
     let error = Pipe()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     process.arguments = arguments
+    // Match BoundedProcessRunner: XCTest's DYLD/SDK environment must not leak
+    // into the system Git shim or any developer-tool subprocess it launches.
+    process.environment = [
+        "PATH": "/usr/bin:/bin",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_SYSTEM": "/dev/null",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_TERMINAL_PROMPT": "0",
+    ]
+    process.standardInput = FileHandle.nullDevice
     process.standardOutput = output
     process.standardError = error
     try process.run()
