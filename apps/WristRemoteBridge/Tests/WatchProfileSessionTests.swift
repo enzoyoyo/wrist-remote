@@ -2,6 +2,49 @@ import XCTest
 @testable import WristRemoteBridge
 
 final class WatchProfileSessionTests: XCTestCase {
+    func testCancelledStartCompletionCannotActivateReplacement() throws {
+        var voice = BridgeVoiceSession()
+        let original = UUID().uuidString
+        XCTAssertTrue(voice.begin(sessionID: original, inputSource: "appleWatch",
+                                  profileRevision: 3, acceptedProfileRevision: 3))
+        let stale = try XCTUnwrap(voice.startToken)
+        XCTAssertTrue(voice.stop(sessionID: original, force: true))
+        // Even reuse of the stream identifier must not reuse the start ticket.
+        XCTAssertTrue(voice.begin(sessionID: original, inputSource: "appleWatch",
+                                  profileRevision: 3, acceptedProfileRevision: 3))
+        let current = try XCTUnwrap(voice.startToken)
+        let before = voice
+        XCTAssertNil(voice.completeStart(token: stale, succeeded: true))
+        XCTAssertEqual(voice, before)
+        XCTAssertNotNil(voice.completeStart(token: current, succeeded: true))
+        let active = voice
+        XCTAssertNil(voice.completeStart(token: stale, succeeded: false))
+        XCTAssertEqual(voice, active)
+    }
+
+    func testReservationCannotBeRevivedAfterCancelOrReplace() throws {
+        var gate = BridgeVoiceStartReservation()
+        let first = try XCTUnwrap(gate.reserve(sessionID: "first"))
+        XCTAssertNil(gate.reserve(sessionID: "second"))
+        gate.cancel(sessionID: "first")
+        let second = try XCTUnwrap(gate.reserve(sessionID: "second"))
+        XCTAssertFalse(gate.consume(first))
+        gate.discard(first)
+        gate.cancel(sessionID: "first")
+        XCTAssertEqual(gate.pending, second)
+        XCTAssertTrue(gate.consume(second))
+        XCTAssertFalse(gate.consume(second))
+    }
+
+    func testPendingOnlyCancellationReleasesReservation() throws {
+        var gate = BridgeVoiceStartReservation()
+        let pending = try XCTUnwrap(gate.reserve(sessionID: "pending"))
+        gate.cancel()
+        XCTAssertFalse(gate.consume(pending))
+        XCTAssertNil(gate.pending)
+        XCTAssertNotNil(gate.reserve(sessionID: "pending"))
+    }
+
     func testRuntimeProfileUpdateIsRejectedDuringActiveVoiceSession() {
         XCTAssertEqual(
             WatchProfileRuntimeUpdatePolicy.retryReason(hasActiveVoiceSession: true),
@@ -34,7 +77,7 @@ final class WatchProfileSessionTests: XCTestCase {
             profileRevision: 3,
             acceptedProfileRevision: 3
         ))
-        XCTAssertNotNil(voice.completeStart(succeeded: true))
+        XCTAssertNotNil(voice.completeStart(token: voice.startToken!, succeeded: true))
         let originalVoice = voice
 
         XCTAssertEqual(
@@ -160,7 +203,7 @@ final class WatchProfileSessionTests: XCTestCase {
             acceptedProfileRevision: 3
         ))
         XCTAssertEqual(
-            voice.completeStart(succeeded: true),
+            voice.completeStart(token: voice.startToken!, succeeded: true),
             .init(sessionID: streamID, profileRevision: 3)
         )
         XCTAssertTrue(voice.acceptsAudio(

@@ -4,6 +4,24 @@ import SwiftUI
 @MainActor
 struct WristRemoteIOSApp: App {
     @Environment(\.scenePhase) private var scenePhase
+    @State private var navigationResetID = UUID()
+
+    private static var isUIPreview: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--wristremote-ui-preview")
+            || isRemoteUIPreview
+        #else
+        false
+        #endif
+    }
+
+    private static var isRemoteUIPreview: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--wristremote-ui-preview-remote")
+        #else
+        false
+        #endif
+    }
 
     @StateObject private var connection: WristBridgeConnection
     @StateObject private var layoutSettings: WatchLayoutSettings
@@ -11,7 +29,7 @@ struct WristRemoteIOSApp: App {
     @StateObject private var relay: WatchRelayController
 
     init() {
-        let connection = WristBridgeConnection()
+        let connection = WristBridgeConnection(networkingEnabled: !Self.isUIPreview)
         let layoutSettings = WatchLayoutSettings()
         let actionProfileStore = WatchActionProfileStore()
         let relay = WatchRelayController(
@@ -25,29 +43,40 @@ struct WristRemoteIOSApp: App {
         _actionProfileStore = StateObject(wrappedValue: actionProfileStore)
         _relay = StateObject(wrappedValue: relay)
 
-        relay.activate()
+        if !Self.isUIPreview { relay.activate() }
     }
 
     var body: some Scene {
         WindowGroup {
             NavigationStack {
-                WristRemoteHomeView(
-                    connection: connection,
-                    relay: relay,
-                    settings: layoutSettings,
-                    profileStore: actionProfileStore
-                )
+                if Self.isRemoteUIPreview {
+                    WristPhoneRemoteView(connection: connection, profileStore: actionProfileStore)
+                } else {
+                    WristRemoteHomeView(
+                        connection: connection,
+                        relay: relay,
+                        settings: layoutSettings,
+                        profileStore: actionProfileStore
+                    )
+                }
             }
+            .id(navigationResetID)
             .task {
                 applyScenePhase(scenePhase)
             }
             .onChange(of: scenePhase) { _, phase in
                 applyScenePhase(phase)
             }
+            .onOpenURL { url in
+                guard !Self.isUIPreview else { return }
+                connection.importPairingLink(url)
+                navigationResetID = UUID()
+            }
         }
     }
 
     private func applyScenePhase(_ phase: ScenePhase) {
+        guard !Self.isUIPreview else { return }
         if phase == .active {
             connection.sceneDidBecomeActive()
             relay.sceneDidBecomeActive()

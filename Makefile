@@ -11,7 +11,7 @@ help:
 	@echo "  make relay-audit     Audit relay dependencies for high-severity vulnerabilities"
 	@echo "  make test-simulators Run iOS unit and offline watchOS UI-smoke tests"
 	@echo "  make build           Build all Apple targets without signing"
-	@echo "  make install-mac     Build, locally sign, and install the Mac bridge"
+	@echo "  make install-mac     Build, stably sign when possible, and install the Mac bridge"
 	@echo "  make install-devices Sign and install the iPhone and Apple Watch apps"
 	@echo "  make deploy-relay    Deploy the optional private Internet relay"
 	@echo "  make security        Run repository secret and privacy checks"

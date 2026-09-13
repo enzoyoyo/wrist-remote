@@ -22,6 +22,35 @@ enum WristInternetRelayConfiguration {
         return configuredURL
     }
 
+    static var isPrivateOnlyBuild: Bool {
+        privateOnlyValue(
+            from: Bundle.main.object(forInfoDictionaryKey: "WristRemotePrivateOnly")
+        )
+    }
+
+    static func privateOnlyValue(from value: Any?) -> Bool {
+        if let boolean = value as? Bool { return boolean }
+        if let number = value as? NSNumber {
+            // Only an explicit numeric zero opts into an Internet-capable
+            // build. Unknown non-zero values remain private-only.
+            return number.doubleValue != 0
+        }
+        if let string = value as? String {
+            switch string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "0", "false", "no":
+                return false
+            case "1", "true", "yes":
+                return true
+            default:
+                // Typos and unresolved build-setting placeholders must not
+                // silently authorize an Internet transport.
+                return true
+            }
+        }
+        // Missing metadata must never silently enable an Internet transport.
+        return true
+    }
+
     static func isOperationalBaseURL(_ baseURL: URL) -> Bool {
         guard baseURL.scheme?.lowercased() == "https",
               let rawHost = baseURL.host?.lowercased()
@@ -31,6 +60,16 @@ enum WristInternetRelayConfiguration {
             host.removeLast()
         }
         return !host.isEmpty && host != "invalid" && !host.hasSuffix(".invalid")
+    }
+
+    /// A stored provisioning record must never re-enable a relay that the
+    /// current signed build explicitly disables with the `.invalid` sentinel.
+    static var isEnabledForCurrentBuild: Bool {
+        isEnabled(baseURL: productionBaseURL, privateOnly: isPrivateOnlyBuild)
+    }
+
+    static func isEnabled(baseURL: URL, privateOnly: Bool) -> Bool {
+        !privateOnly && isOperationalBaseURL(baseURL)
     }
     static let maximumClockSkewMilliseconds: Int64 = 30_000
     static let maximumFrameLifetimeMilliseconds: Int64 = 30_000
@@ -71,7 +110,7 @@ enum WristInternetVoiceLeasePolicy {
 enum WristInternetVoiceOutcomePollingPolicy {
     static let intervalMilliseconds = 750
     static let timeoutMilliseconds =
-        WristInternetRelayRequestBudget.timeoutMilliseconds + 6_000
+        max(60_000, WristInternetRelayRequestBudget.timeoutMilliseconds + 6_000)
     static let attemptCount =
         (timeoutMilliseconds + intervalMilliseconds - 1) / intervalMilliseconds
 }
@@ -380,6 +419,12 @@ struct WristInternetRelayOperation: Codable, Equatable, Sendable {
         switch voiceIntent {
         case .foregroundDictation: return codexTaskIdentity == nil
         case .codexTask: return codexTaskIdentity != nil
+        case .codexConversation:
+            // Conversation targets are short-lived Mac capabilities and are
+            // intentionally supported only by the mutually authenticated
+            // iPhone-to-Mac private route. The optional public relay must not
+            // become another Codex control plane.
+            return false
         }
     }
 }
@@ -644,19 +689,71 @@ enum WristInternetRelayCryptoError: Error, Equatable {
 }
 
 enum WristInternetRelayKeychain {
+    enum LoadResult<Value> {
+        case loaded(Value)
+        case notFound
+        case unavailable
+    }
+
     static func load<T: Decodable>(
         _ type: T.Type,
         account: String,
         service: String
     ) -> T? {
+        guard case let .loaded(value) = loadResult(
+            type,
+            account: account,
+            service: service
+        ) else { return nil }
+        return value
+    }
+
+    static func loadResult<T: Decodable>(
+        _ type: T.Type,
+        account: String,
+        service: String
+    ) -> LoadResult<T> {
         var query = baseQuery(account: account, service: service)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data
-        else { return nil }
-        return try? JSONDecoder().decode(type, from: data)
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        return classifyLoad(
+            type,
+            copyStatus: status,
+            data: result as? Data
+        )
+    }
+
+    static func classifyLoad<T: Decodable>(
+        _ type: T.Type,
+        copyStatus: OSStatus,
+        data: Data?
+    ) -> LoadResult<T> {
+        if copyStatus == errSecItemNotFound { return .notFound }
+        guard copyStatus == errSecSuccess,
+              let data,
+              let decoded = try? JSONDecoder().decode(type, from: data)
+        else { return .unavailable }
+        return .loaded(decoded)
+    }
+
+    /// A missing revocation marker means no revocation has ever been stored.
+    /// Any unreadable, corrupt, or otherwise unavailable marker must instead
+    /// block credential recovery so a retained relay credential cannot be
+    /// resurrected while revocation state is ambiguous.
+    static func blocksCredentialRecovery<T>(
+        for result: LoadResult<T>,
+        isRevoked: (T) -> Bool
+    ) -> Bool {
+        switch result {
+        case let .loaded(value):
+            return isRevoked(value)
+        case .notFound:
+            return false
+        case .unavailable:
+            return true
+        }
     }
 
     @discardableResult

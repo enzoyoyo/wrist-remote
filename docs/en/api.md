@@ -2,7 +2,9 @@
 
 [简体中文](../zh-CN/api.md)
 
-This page documents the current versioned wire surfaces: relay protocol 3, LAN/Watch protocol 7, action profile format 1, and the local Codex hook. Protocol versions require an exact match and do not silently downgrade. The Swift files under `apps/WristRemote/Shared` are an internal application implementation and test target, not an exported SwiftPM SDK.
+This page documents the current versioned wire surfaces: relay protocol 3 source, LAN/Watch protocol 7, action profile format 1, and the local Codex hook. Protocol versions require an exact match and do not silently downgrade. The Swift files under `apps/WristRemote/Shared` are an internal application implementation and test target, not an exported SwiftPM SDK.
+
+The current personal build sets `WRISTREMOTE_PRIVATE_ONLY = YES` and an `.invalid` Relay endpoint. Therefore, the Relay API below is inactive reference material for a separately reviewed variant, not an endpoint that the personal products call.
 
 ## Relay HTTP/WSS API
 
@@ -100,13 +102,15 @@ LAN uses `_wristremote._tcp` on TCP `60927`. Its handshake, six-digit verificati
 
 - `buttonEvent`: command, press/release phase, and profile revision.
 - `voiceStart` / `voiceStop`: stream ID, voice intent, and optional task identity.
+- `audio` / `audioAck`: bounded PCM packets and acknowledgements that advance only after Mac delivery; a broken stream is cancelled rather than replayed.
 - `requestStatus` / `status`: connection, profile, favorites, titles, voice, task, and relay provisioning.
 - `favoritesUpdate`: four favorite buttons.
 - `codexTaskSnapshot`: a snapshot or explicit clear tombstone.
-- `voiceOutcome`: transcript and final-audio acknowledgement.
-- `codexReplySubmit`: confirmed text, submission ID, and exact task identity.
+- `voiceOutcome`: foreground-dictation transcript or a final delivered/failed outcome. Codex voice outcomes omit the transcript; the Bridge obtains it from Codex online transcription and queues the text to the selected task through local app-server. A queue receipt is not task completion.
+- Codex catalog/target messages: list existing destinations and resolve **New task** through independent `thread/start`; voice is allowed only after the returned thread is registered as an existing target.
+- `codexReplySubmit`: compatibility text-submission surface. It is not the current held-voice path.
 
-The bundled apps use the internal constructors and validators in `apps/WristRemote/Shared`. External integrations should use the documented hook and relay surfaces; do not treat those internal Swift types as a public package API or bypass the wire schemas with handwritten production messages.
+The bundled apps use the internal constructors and validators in `apps/WristRemote/Shared`. External integrations for the private-only build should use the documented local hook. Do not treat the internal Swift types as a public package API, handwrite production messages, or enable the inactive Relay surface to work around private connectivity.
 
 ## Action profile format 1
 

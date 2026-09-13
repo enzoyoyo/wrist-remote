@@ -202,6 +202,7 @@ final class WatchActionProfileStoreTests: XCTestCase {
         XCTAssertEqual(accepted?.profileRevision, 3)
         XCTAssertEqual(accepted?.intent, .foregroundDictation)
         XCTAssertNil(accepted?.codexTaskIdentity)
+        XCTAssertNil(accepted?.codexConversationTarget)
         XCTAssertNil(accepted?.finalSequence)
 
         let codexIdentity = try XCTUnwrap(WatchCodexTaskIdentity(
@@ -226,6 +227,94 @@ final class WatchActionProfileStoreTests: XCTestCase {
         XCTAssertEqual(acceptedCodexStop?.intent, .codexTask)
         XCTAssertEqual(acceptedCodexStop?.codexTaskIdentity, codexIdentity)
         XCTAssertEqual(acceptedCodexStop?.finalSequence, 19)
+    }
+
+    func testRelayAcceptsOnlyTheExactMacIssuedConversationTarget() throws {
+        let threadID = UUID().uuidString.lowercased()
+        let target = try XCTUnwrap(WatchCodexConversationTarget(
+            leaseID: UUID(),
+            kind: .existing,
+            serverEpoch: UUID(),
+            catalogRevision: 4,
+            entryRevision: 9,
+            threadID: threadID,
+            displayTitle: "Example conversation",
+            workspaceID: "workspace-example",
+            workspaceLabel: "Example workspace",
+            expiresAtEpochMilliseconds: 2_000
+        ))
+        let entry = try XCTUnwrap(WatchCodexConversationEntry(
+            threadID: threadID,
+            title: target.displayTitle,
+            workspaceLabel: target.workspaceLabel,
+            state: .idle,
+            updatedAtEpochMilliseconds: 9,
+            canAcceptInput: true,
+            entryRevision: target.entryRevision,
+            target: target
+        ))
+        let catalog = try XCTUnwrap(WatchCodexConversationCatalog(
+            serverEpoch: target.serverEpoch,
+            revision: target.catalogRevision,
+            entries: [entry],
+            hasMore: false,
+            refreshedAtEpochMilliseconds: 1
+        ))
+
+        XCTAssertTrue(WatchRelayController.acceptsVoiceDestination(
+            intent: .codexConversation,
+            codexTaskIdentity: nil,
+            codexConversationTarget: target,
+            currentTask: nil,
+            catalog: catalog,
+            nowEpochMilliseconds: 1_000
+        ))
+        XCTAssertFalse(WatchRelayController.acceptsVoiceDestination(
+            intent: .codexConversation,
+            codexTaskIdentity: nil,
+            codexConversationTarget: target,
+            currentTask: nil,
+            catalog: catalog,
+            nowEpochMilliseconds: 2_000
+        ))
+        XCTAssertFalse(WatchRelayController.acceptsVoiceDestination(
+            intent: .codexConversation,
+            codexTaskIdentity: nil,
+            codexConversationTarget: nil,
+            currentTask: nil,
+            catalog: catalog,
+            nowEpochMilliseconds: 1_000
+        ))
+
+        let renewal = try XCTUnwrap(WatchCodexConversationTarget(
+            leaseID: UUID(), kind: .existing, serverEpoch: target.serverEpoch,
+            catalogRevision: 5, entryRevision: 10, threadID: threadID,
+            displayTitle: target.displayTitle, workspaceID: target.workspaceID,
+            workspaceLabel: target.workspaceLabel, expiresAtEpochMilliseconds: 3_000
+        ))
+        let renewedEntry = try XCTUnwrap(WatchCodexConversationEntry(
+            threadID: threadID, title: renewal.displayTitle, workspaceLabel: renewal.workspaceLabel,
+            state: .idle, updatedAtEpochMilliseconds: 10, canAcceptInput: true,
+            entryRevision: 10, target: renewal
+        ))
+        let renewedCatalog = try XCTUnwrap(WatchCodexConversationCatalog(
+            serverEpoch: target.serverEpoch, revision: 5, entries: [renewedEntry],
+            hasMore: false, refreshedAtEpochMilliseconds: 10
+        ))
+        XCTAssertFalse(WatchRelayController.acceptsVoiceDestination(
+            intent: .codexConversation, codexTaskIdentity: nil, codexConversationTarget: target,
+            currentTask: nil, catalog: renewedCatalog, nowEpochMilliseconds: 1_000
+        ), "A new recording cannot use an old capability")
+        XCTAssertTrue(WatchRelayController.acceptsVoiceDestination(
+            intent: .codexConversation, codexTaskIdentity: nil, codexConversationTarget: target,
+            currentTask: nil, catalog: renewedCatalog, continuingAcceptedRecording: true,
+            nowEpochMilliseconds: 1_000
+        ), "A Mac-accepted start must survive a same-task catalog renewal before its reply")
+        XCTAssertFalse(WatchRelayController.acceptsVoiceDestination(
+            intent: .codexConversation, codexTaskIdentity: nil, codexConversationTarget: target,
+            currentTask: nil, catalog: renewedCatalog, continuingAcceptedRecording: true,
+            nowEpochMilliseconds: 2_000
+        ), "A renewal does not extend the original recording capability's lifetime")
     }
 
     func testRelayClearsHeldInteractionsAsSoonAsProfileBecomesUnready() {

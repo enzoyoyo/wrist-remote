@@ -83,7 +83,8 @@ struct WatchGestureRecognizer {
     }
 
     mutating func longPressTimedOut(_ button: WristRemoteButton) -> [Command] {
-        guard var state = states[button], state.isPressed, state.recognizesLongPress else {
+        guard var state = states[button], state.isPressed,
+              state.recognizesLongPress, !state.longPressTriggered else {
             return []
         }
         state.longPressTriggered = true

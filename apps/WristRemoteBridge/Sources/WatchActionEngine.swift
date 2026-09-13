@@ -10,12 +10,14 @@ final class WatchActionEngine {
         var postKey: @MainActor (CGKeyCode, CGEventFlags) -> Bool
         var postSystemKey: @MainActor (Int32) -> Bool
         var openCustomApplication: @MainActor (BridgeApplicationProfile) -> Bool
+        var showContextMenu: @MainActor () -> Bool = { false }
 
         static let live = Dependencies(
             isAccessibilityTrusted: { AXIsProcessTrusted() },
             postKey: WatchActionEngine.postKey,
             postSystemKey: WatchActionEngine.postSystemKey,
-            openCustomApplication: WatchActionEngine.openCustomApplication
+            openCustomApplication: WatchActionEngine.openCustomApplication,
+            showContextMenu: WatchActionEngine.showContextMenu
         )
     }
 
@@ -88,9 +90,11 @@ final class WatchActionEngine {
         case .deleteBackward:
             return dependencies.postKey(51, [])
         case .showDesktop:
-            return dependencies.postKey(103, [])
+            // macOS Show Desktop is Fn-F11. A bare F11 can reach the front app
+            // without showing the desktop. Never rewrite the user's shortcuts.
+            return dependencies.postKey(103, .maskSecondaryFn)
         case .contextMenu:
-            return dependencies.postKey(110, [])
+            return dependencies.showContextMenu()
         case .appSwitcher:
             return dependencies.postKey(48, .maskCommand)
         case .volumeUp:
@@ -129,12 +133,103 @@ final class WatchActionEngine {
     }
 
     private static func postKey(_ keyCode: CGKeyCode, _ flags: CGEventFlags) -> Bool {
-        guard let source = CGEventSource(stateID: .combinedSessionState),
-              let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
-              let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
+        guard let source = CGEventSource(stateID: .privateState) else { return false }
+        let steps = keyboardSequence(
+            keyCode: keyCode, flags: flags,
+            heldFlags: CGEventSource.flagsState(.combinedSessionState)
+        )
+        let events = steps.compactMap { step -> CGEvent? in
+            guard let event = CGEvent(
+                keyboardEventSource: source, virtualKey: step.keyCode, keyDown: step.isDown
+            ) else { return nil }
+            event.flags = step.flags
+            if step.isModifier { event.type = .flagsChanged }
+            return event
+        }
+        guard events.count == steps.count else { return false }
+        events.forEach { $0.post(tap: .cghidEventTap) }
+        return true
+    }
+
+    struct KeyboardStep: Equatable {
+        let keyCode: CGKeyCode
+        let isDown: Bool
+        let flags: CGEventFlags
+        let isModifier: Bool
+    }
+
+    static func keyboardSequence(
+        keyCode: CGKeyCode, flags: CGEventFlags, heldFlags: CGEventFlags
+    ) -> [KeyboardStep] {
+        // Cmd-Tab commits the switch only after Command is released. Merely
+        // putting Command on the Tab events never supplies that release.
+        // Do not release modifiers the user was already holding.
+        let modifiers: [(CGEventFlags, CGKeyCode)] = [
+            (.maskControl, 59), (.maskAlternate, 58), (.maskShift, 56),
+            (.maskCommand, 55), (.maskSecondaryFn, 63),
+        ]
+        // Function-key state may reflect a preceding synthesized navigation
+        // event. Do not carry it (or undocumented bits) into a new Cmd-Tab.
+        let held = heldFlags.intersection([.maskControl, .maskAlternate, .maskShift,
+                                          .maskCommand, .maskAlphaShift])
+        let added = modifiers.filter { flags.contains($0.0) && !held.contains($0.0) }
+        var active = held
+        var steps: [KeyboardStep] = []
+        for (flag, code) in added {
+            active.insert(flag)
+            steps.append(.init(keyCode: code, isDown: true, flags: active, isModifier: true))
+        }
+        steps.append(.init(keyCode: keyCode, isDown: true, flags: active, isModifier: false))
+        steps.append(.init(keyCode: keyCode, isDown: false, flags: active, isModifier: false))
+        for (flag, code) in added.reversed() {
+            active.remove(flag)
+            steps.append(.init(keyCode: code, isDown: false, flags: active, isModifier: true))
+        }
+        return steps
+    }
+
+    private static func showContextMenu() -> Bool {
+        let system = AXUIElementCreateSystemWide()
+        var rawFocused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            system, kAXFocusedUIElementAttribute as CFString, &rawFocused
+        ) == .success,
+              let rawFocused, CFGetTypeID(rawFocused) == AXUIElementGetTypeID()
         else { return false }
-        down.flags = flags
-        up.flags = flags
+        let focused = unsafeBitCast(rawFocused, to: AXUIElement.self)
+        AXUIElementSetMessagingTimeout(focused, 0.5)
+        if AXUIElementPerformAction(focused, kAXShowMenuAction as CFString) == .success {
+            return true
+        }
+        // Some apps expose a focused element but no AXShowMenu action. Use a
+        // secondary click inside that element, never a Windows-only menu key
+        // or a click at an unrelated cursor position in another application.
+        var rawPosition: CFTypeRef?
+        var rawSize: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(focused, kAXPositionAttribute as CFString, &rawPosition) == .success,
+              AXUIElementCopyAttributeValue(focused, kAXSizeAttribute as CFString, &rawSize) == .success,
+              let rawPosition, let rawSize,
+              CFGetTypeID(rawPosition) == AXValueGetTypeID(),
+              CFGetTypeID(rawSize) == AXValueGetTypeID()
+        else { return false }
+        var position = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(unsafeBitCast(rawPosition, to: AXValue.self), .cgPoint, &position),
+              AXValueGetValue(unsafeBitCast(rawSize, to: AXValue.self), .cgSize, &size),
+              position.x.isFinite, position.y.isFinite,
+              size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0
+        else { return false }
+        let point = CGPoint(x: position.x + size.width / 2, y: position.y + size.height / 2)
+        var display: CGDirectDisplayID = 0
+        var displayCount: UInt32 = 0
+        guard CGGetDisplaysWithPoint(point, 1, &display, &displayCount) == .success,
+              displayCount > 0,
+              let source = CGEventSource(stateID: .combinedSessionState),
+              let down = CGEvent(mouseEventSource: source, mouseType: .rightMouseDown,
+                                 mouseCursorPosition: point, mouseButton: .right),
+              let up = CGEvent(mouseEventSource: source, mouseType: .rightMouseUp,
+                               mouseCursorPosition: point, mouseButton: .right)
+        else { return false }
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
         return true
@@ -164,8 +259,9 @@ final class WatchActionEngine {
             data1: upData,
             data2: -1
         ) else { return false }
-        down.cgEvent?.post(tap: .cghidEventTap)
-        up.cgEvent?.post(tap: .cghidEventTap)
+        guard let downEvent = down.cgEvent, let upEvent = up.cgEvent else { return false }
+        downEvent.post(tap: .cghidEventTap)
+        upEvent.post(tap: .cghidEventTap)
         return true
     }
 

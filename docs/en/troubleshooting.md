@@ -2,7 +2,7 @@
 
 [简体中文](../zh-CN/troubleshooting.md)
 
-First classify the failure as build, signing, LAN, relay, permission, voice, action profile, or Codex. A received message is not proof of final action or text delivery.
+First classify the failure as build, signing, LAN/Tailscale, permission, voice, action profile, or Codex. The current personal build is private-only and has no public-Relay fallback. A received message is not proof of final action, audio, or text delivery.
 
 ## Baseline checks
 
@@ -44,7 +44,7 @@ Set only the one-shot variable named by the script. Do not attach UDIDs, Team ID
 3. First connection requires approving the same six-digit code on both sides.
 4. Check whether VPN, firewall, or guest Wi-Fi blocks Bonjour or client-to-client traffic.
 5. If foreground recovery is limited because iPhone was force-quit or locked, open the iPhone app.
-6. Relay fallback works only after deployment, rebuilding all endpoints, and provisioning.
+6. For remote private access, confirm that Tailscale is active on the Mac and iPhone and that the saved endpoint is a literal official-range Tailscale IP. DNS names and public endpoints are rejected.
 
 Transport recovery alone is not action success. Test a non-destructive mapping and observe the final Mac action.
 
@@ -63,29 +63,22 @@ Transport recovery alone is not action success. Test a non-destructive mapping a
 - Confirm the gesture committed. Dragging away or cancelling should not emit success feedback.
 - Reduce Motion reduces visual animation but should not automatically disable semantic haptics.
 
-## Chinese speech is not recognized
+## Chinese foreground dictation is not recognized
 
 1. Grant Watch Microphone and Mac Speech Recognition permissions.
 2. Confirm the bridge is connected and no other Watch voice session owns the stream.
 3. Confirm the Mac offers a Chinese Speech recognizer. Simplified Chinese resolves preferentially to `zh-CN`; Traditional Chinese uses the matching region.
 4. End recording normally and wait for the final result rather than relying on a partial transcript.
-5. Completed foreground dictation is injected immediately into the focused input. Only Codex task voice uses draft confirmation, and it additionally requires the current completed task identity.
+5. Completed foreground dictation is injected immediately into the focused input.
 6. If recognition succeeds but no text appears, confirm the target input still has focus and check bridge Accessibility permission.
 
-This path uses the bridge Speech framework. It does not depend on a third-party input method, virtual microphone, or global Fn mode.
+Only foreground dictation uses the bridge Speech framework and temporary pasteboard. It does not depend on a third-party input method, virtual microphone, or global Fn mode.
 
 Foreground injection briefly uses the general system pasteboard and simulates Command-V. After approximately 450 ms, the previous contents are restored only if the pasteboard still contains the temporary transcript and has not changed; other processes may observe the text briefly. If another process changes the pasteboard, the bridge preserves the new contents and the original contents may not be restored automatically.
 
-## Relay health fails
+## A Relay route appears in a private-only build
 
-- HTTP 503 with `configured=false`: `ALLOWED_ROOM_ID` or `BOOTSTRAP_MAC_TOKEN` is missing or malformed. Rerun `make deploy-relay`.
-- `mac_offline`: Worker is healthy but has no active bridge WSS. Open the bridge and confirm the same relay URL and Keychain credentials.
-- `unauthorized`: the device or Mac bearer does not match initialized room credentials. Do not repeatedly hand-initialize the room.
-- `replay_detected`: a sequence or operation ID was reused; create a new operation.
-- `relay_timeout`: a bridge connection exists but did not answer within 15 seconds. Check bridge state and network.
-- Health passes but Watch has no Internet path: rebuild all endpoints after deployment and complete one LAN provisioning session.
-
-The relay intentionally does not preserve offline buttons. No late execution after reconnect is correct behavior.
+Stop acceptance. A personal build must have `WRISTREMOTE_PRIVATE_ONLY = YES` and an `.invalid` Relay endpoint compiled into every product. Remove any historical Relay credentials through the documented private-only revocation path, restart all endpoints, and verify through system network state or packet capture that no request reaches a former public endpoint. Do not replace the `.invalid` value to work around a connection problem.
 
 ## Codex task is absent
 
@@ -101,12 +94,14 @@ Do not paste a hook token, real task JSON, working directory, or transcript into
 
 ## Codex reply fails
 
-- The task must be the exact current completed task. Running, changed, and old-revision tasks are rejected.
-- The user must confirm a non-empty draft.
-- `session_id` must be a usable thread UUID.
+- The target must be the exact selected, authorized existing task. Running-state and revision checks still apply to the operation being attempted.
+- A newly requested task must first complete an independent `thread/start` with no parent/fork relationship, appear as an existing target, and only then accept voice.
+- Refresh **Choose conversation** on the Watch and verify that the target authorization is unexpired and still accepts input.
 - The Codex executable must be executable. If discovery fails, configure its local absolute path and rebuild the bridge.
-- The CLI must accept the queue request within five seconds.
+- The local Codex app-server must answer `thread/list`, independent `thread/start`, and text `thread/queue/add` requests within the bounded timeout. Voice also requires a signed-in Codex account and access to its online transcription service.
 - Reusing a submission ID with different content is rejected.
+
+Codex voice does not use macOS Speech or the pasteboard. The Watch sends original PCM through iPhone; while the connection remains live, it advances to the next packet only after the Mac acknowledges the current packet. The Mac writes an owner-only temporary WAV, requests first-party online transcription with the signed-in Codex account, revalidates the destination, and queues the text through local app-server. If an acknowledgement is missing, the route disconnects, or the target changes, the stream fails closed, partial audio is deleted, and nothing is replayed automatically. Record again after reconnecting; if a submission result is uncertain, first inspect the selected task to avoid sending twice.
 
 ## Collect diagnostics safely
 

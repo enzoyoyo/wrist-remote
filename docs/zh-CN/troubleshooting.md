@@ -2,7 +2,7 @@
 
 [English](../en/troubleshooting.md)
 
-先确定故障属于构建、签名、局域网、Relay、权限、语音、动作配置还是 Codex。不要用“已收到消息”代替最终动作或文本结果。
+先确定故障属于构建、签名、局域网/Tailscale、权限、语音、动作配置还是 Codex。当前个人版是 private-only，不存在公网 Relay 回退。不要用“已收到消息”代替最终动作、音频或文本结果。
 
 ## 基础检查
 
@@ -44,7 +44,7 @@ scripts/install-devices.command --dry-run
 3. 首次连接必须在两端确认一致的六位码。
 4. 检查 VPN、防火墙或访客 Wi-Fi 是否阻断 Bonjour 或客户端互访。
 5. 如果 iPhone 被强制退出或锁屏状态限制了前台恢复，先打开 iPhone App。
-6. Relay 仅在已部署、三端重建并完成 provisioning 后可作为外网路径。
+6. 需要远程私网访问时，确认 Mac 与 iPhone 的 Tailscale 均已连接，且保存的 endpoint 是官方范围内的字面 Tailscale IP；DNS 名称与公网 endpoint 会被拒绝。
 
 连接恢复只表示传输可用。再测试一个无破坏性映射，确认 Mac 实际执行。
 
@@ -63,29 +63,22 @@ scripts/install-devices.command --dry-run
 - 确认动作真正提交；拖出按钮或取消手势不应产生成功震动。
 - “减弱动态效果”会减少视觉动画，但不应自动关闭语义震动。
 
-## 中文语音不识别
+## 中文普通前台听写不识别
 
 1. 允许 Watch 麦克风和 Mac 语音识别权限。
 2. 确认 Bridge 已连接并且没有另一段 Watch 语音占用会话。
 3. 检查 Mac 系统是否提供中文 Speech recognizer；简体中文会优先解析为 `zh-CN`，繁体中文按地区选择。
 4. 说完后正常结束录音，等待最终结果而不是仅看 partial transcript。
-5. 普通前台语音识别完成后会立即注入当前焦点输入框；只有 Codex 任务语音使用草稿确认，并且还要求当前 completed task identity。
+5. 普通前台听写识别完成后会立即注入当前焦点输入框。
 6. 若识别成功但文字未出现，确认目标输入框仍有焦点，并检查 Bridge 辅助功能权限。
 
-此链路使用 Bridge 的 Speech Framework，不依赖第三方输入法、虚拟麦克风或全局 Fn 模式。
+只有普通前台听写使用 Bridge 的 Speech Framework 和临时剪贴板；它不依赖第三方输入法、虚拟麦克风或全局 Fn 模式。
 
 普通语音注入会短暂使用系统通用剪贴板并模拟 Command-V。约 450 ms 后，仅当剪贴板仍是临时识别文本且没有被改变时才恢复原内容；其他进程可能短暂观察到文本。若期间有进程改变剪贴板，Bridge 不覆盖新内容，原内容也可能无法自动恢复。
 
-## Relay 健康检查失败
+## 私有版出现 Relay 路径
 
-- HTTP 503 且 `configured=false`：`ALLOWED_ROOM_ID` 或 `BOOTSTRAP_MAC_TOKEN` 缺失/格式错误，重新运行 `make deploy-relay`。
-- `mac_offline`：Worker 正常，但 Bridge 没有活跃 WSS；打开 Bridge 并确认其使用同一 Relay URL 和 Keychain credentials。
-- `unauthorized`：设备或 Mac bearer 与 room 初始化值不一致；不要反复手工初始化。
-- `replay_detected`：序号或 operation ID 已使用，调用者必须生成新 operation。
-- `relay_timeout`：Mac 连接存在但 15 秒内未回复，检查 Bridge 状态和网络。
-- 健康通过但 Watch 仍无互联网：确认部署后重新构建三端，并先完成一次 LAN provisioning。
-
-Relay 不会保存离线按键。网络恢复后没有补执行是正确行为。
+立即停止验收。个人版必须在所有产物中同时编入 `WRISTREMOTE_PRIVATE_ONLY = YES` 和 `.invalid` Relay endpoint。按私有版撤销流程清除历史 Relay 凭据，重启三端，并通过系统网络状态或抓包确认没有请求发往旧公网 endpoint。不能为了绕过连接问题而替换 `.invalid` 值。
 
 ## Codex 任务不显示
 
@@ -101,12 +94,14 @@ Relay 不会保存离线按键。网络恢复后没有补执行是正确行为�
 
 ## Codex 回复失败
 
-- 必须是当前精确的 completed task；运行中、已切换或旧 revision 都会拒绝。
-- 用户必须确认非空草稿。
-- `session_id` 必须是可用的 thread UUID。
+- 目标必须是当前精确选择且仍获授权的已有任务；具体操作仍受运行状态和 revision 门禁约束。
+- 新任务必须先完成无 parent/fork 关系的独立 `thread/start`，出现在已有目标列表中，之后才允许语音。
+- 在手表的「选择会话」中刷新，确认目标未过期且仍可接收输入。
 - Codex 可执行文件必须可执行；自动发现失败时配置本地绝对路径并重建 Bridge。
-- CLI 需在 5 秒内接受 `queue` 请求。
+- 本地 Codex app-server 需在限定时间内回复 `thread/list`、独立 `thread/start` 和文字 `thread/queue/add` 请求。语音还需要已登录 Codex 账号并能访问其联网转写服务。
 - 相同 submission ID 携带不同内容会被拒绝。
+
+Codex 语音不使用 macOS Speech 或剪贴板。Watch 通过 iPhone 发送原始 PCM；连续连接期间，只有收到 Mac 对当前音频包的 ACK 后才推进下一包。Mac 写入仅文件所有者可读写的临时 WAV，使用已登录 Codex 账号请求第一方联网转写，再次校验目标，并经本机 app-server 排入文字。ACK 缺失、链路断开或目标变化时，音频流会 fail closed，部分音频被删除，且不会自动重放；重连后需要重新录音。若提交结果不明确，先查看所选任务，避免重复发送。
 
 ## 安全地收集诊断
 

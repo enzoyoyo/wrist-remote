@@ -15,8 +15,8 @@ settings:
     SWIFT_VERSION: "5.0"
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: $(WRISTREMOTE_DEVELOPMENT_TEAM)
-    CURRENT_PROJECT_VERSION: 7
-    MARKETING_VERSION: 0.3.0
+    CURRENT_PROJECT_VERSION: 17
+    MARKETING_VERSION: 0.6.0
     ENABLE_USER_SCRIPT_SANDBOXING: YES
 
 targets:
@@ -42,13 +42,19 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.utilities
+        UILaunchScreen: {}
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.wristremote.pairing
+            CFBundleURLSchemes:
+              - wristremote
         NSBonjourServices:
           - _wristremote._tcp
         NSLocalNetworkUsageDescription: 用于发现并连接同一局域网内运行腕上遥控桥的 Mac。
+        WristRemotePrivateOnly: $(WRISTREMOTE_PRIVATE_ONLY)
         WristRemoteRelayBaseURL: $(WRISTREMOTE_RELAY_BASE_URL)
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: $(WRISTREMOTE_BUNDLE_PREFIX).ios
+        PRODUCT_BUNDLE_IDENTIFIER: $(WRISTREMOTE_IOS_BUNDLE_IDENTIFIER)
         PRODUCT_NAME: WristRemote
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
@@ -79,13 +85,28 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSMicrophoneUsageDescription: 用于按住语音键时把 Apple Watch 麦克风音频发送到独立腕上遥控桥。
         WKApplication: true
-        WKCompanionAppBundleIdentifier: $(WRISTREMOTE_BUNDLE_PREFIX).ios
+        WKCompanionAppBundleIdentifier: $(WRISTREMOTE_IOS_BUNDLE_IDENTIFIER)
         WKRunsIndependentlyOfCompanionApp: true
         WKPrefersNetworkUponForeground: true
+        NSLocalNetworkUsageDescription: 用于在同一局域网内直接连接已配对的腕上遥控桥并发送遥控按键。
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSExceptionDomains:
+            "10.0.0.0/8":
+              NSExceptionAllowsInsecureHTTPLoads: true
+            "172.16.0.0/12":
+              NSExceptionAllowsInsecureHTTPLoads: true
+            "192.168.0.0/16":
+              NSExceptionAllowsInsecureHTTPLoads: true
+            "169.254.0.0/16":
+              NSExceptionAllowsInsecureHTTPLoads: true
+            "fc00::/7":
+              NSExceptionAllowsInsecureHTTPLoads: true
+        WristRemotePrivateOnly: $(WRISTREMOTE_PRIVATE_ONLY)
         WristRemoteRelayBaseURL: $(WRISTREMOTE_RELAY_BASE_URL)
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: $(WRISTREMOTE_BUNDLE_PREFIX).ios.watchkitapp
+        PRODUCT_BUNDLE_IDENTIFIER: $(WRISTREMOTE_WATCH_BUNDLE_IDENTIFIER)
         PRODUCT_NAME: WristRemoteWatchApp
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "4"
@@ -102,7 +123,7 @@ targets:
       - target: WristRemote
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: $(WRISTREMOTE_BUNDLE_PREFIX).ios.tests
+        PRODUCT_BUNDLE_IDENTIFIER: $(WRISTREMOTE_IOS_BUNDLE_IDENTIFIER).tests
         GENERATE_INFOPLIST_FILE: YES
 
   WristRemoteWatchUITests:
@@ -115,7 +136,7 @@ targets:
       - target: WristRemoteWatchApp
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: $(WRISTREMOTE_BUNDLE_PREFIX).watchkitapp.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: $(WRISTREMOTE_WATCH_BUNDLE_IDENTIFIER).uitests
         GENERATE_INFOPLIST_FILE: YES
 
 schemes:

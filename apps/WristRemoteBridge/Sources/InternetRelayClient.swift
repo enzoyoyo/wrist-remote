@@ -66,9 +66,10 @@ final class InternetRelayClient: ObservableObject {
     }
 
     func start() {
-        guard WristInternetRelayConfiguration.isOperationalBaseURL(
-            credentials.provisioning.baseURL
-        ) else {
+        guard WristInternetRelayConfiguration.isEnabledForCurrentBuild,
+              WristInternetRelayConfiguration.isOperationalBaseURL(
+                  credentials.provisioning.baseURL
+              ) else {
             status = .stopped
             return
         }
@@ -352,6 +353,10 @@ enum WristInternetRelayMacCredentialStore {
     }
 
     static func loadOrCreate() -> WristInternetRelayMacCredentials? {
+        guard WristInternetRelayConfiguration.isEnabledForCurrentBuild else {
+            _ = WristInternetRelayKeychain.delete(account: account, service: service)
+            return nil
+        }
         if let stored = WristInternetRelayKeychain.load(
             WristInternetRelayMacCredentials.self,
             account: account,

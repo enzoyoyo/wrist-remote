@@ -2,7 +2,7 @@
 
 [简体中文](../zh-CN/relay-deployment.md)
 
-The relay is optional. The default reserved `.invalid` URL disables the Internet path; LAN control does not require Cloudflare.
+> **Not part of the current personal build.** That build requires `WRISTREMOTE_PRIVATE_ONLY = YES` and a reserved `.invalid` Relay URL, and therefore cannot use the procedure below. It supports LAN and official-IP-only Tailscale private networking, with no Funnel or public fallback. The remaining material documents a separately reviewed relay-capable variant; Relay source or tests do not enable it in private-only products.
 
 ## Security model
 
@@ -129,7 +129,7 @@ Verify at least:
 3. WAN latency does not change single/double/long-press meaning.
 4. Buttons pressed while offline are not executed after reconnect.
 5. An offline Mac produces an explicit failure.
-6. Chinese foreground dictation completes recognition and immediate injection; Codex voice completes draft, confirmation, and final receipt end to end.
+6. Chinese foreground dictation completes recognition and immediate injection. Codex voice sends original Watch audio, writes an owner-only temporary WAV, uses the signed-in Codex account for first-party online transcription, and queues text through local app-server after target revalidation. Temporary or partial audio is deleted; packet ACK loss or disconnect must fail closed without automatic replay.
 7. LAN recovery switches the route back automatically.
 
 Use a non-destructive mapping for acceptance. CI and `/healthz` do not replace these steps.

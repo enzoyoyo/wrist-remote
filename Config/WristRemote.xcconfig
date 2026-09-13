@@ -1,6 +1,14 @@
 // Safe, non-signing defaults. Local.xcconfig is intentionally ignored.
 WRISTREMOTE_BUNDLE_PREFIX = com.example.wristremote
+WRISTREMOTE_IOS_BUNDLE_IDENTIFIER = $(WRISTREMOTE_BUNDLE_PREFIX).ios
+WRISTREMOTE_WATCH_BUNDLE_IDENTIFIER = $(WRISTREMOTE_IOS_BUNDLE_IDENTIFIER).watchkitapp
+WRISTREMOTE_BRIDGE_BUNDLE_IDENTIFIER = $(WRISTREMOTE_BUNDLE_PREFIX).bridge
+WRISTREMOTE_EXISTING_INSTALL_REQUIRED = NO
+WRISTREMOTE_EXISTING_INSTALL_TEAM_ID =
 WRISTREMOTE_DEVELOPMENT_TEAM =
+// Personal/private default: LAN and Tailscale only. A developer must make an
+// explicit source-controlled choice before the optional HTTPS relay can run.
+WRISTREMOTE_PRIVATE_ONLY = YES
 WRISTREMOTE_RELAY_BASE_URL = https:/$()/relay.example.invalid
 WRISTREMOTE_CODEX_EXECUTABLE_PATH =
 

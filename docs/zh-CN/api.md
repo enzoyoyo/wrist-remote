@@ -2,7 +2,9 @@
 
 [English](../en/api.md)
 
-本页描述当前带版本的 wire 接口：Relay protocol 3、LAN/Watch protocol 7、动作 profile format 1，以及本地 Codex Hook。协议版本要求精确匹配，不自动降级。`apps/WristRemote/Shared` 下的 Swift 文件只是 App 内部实现和测试 target，不是对外导出的 SwiftPM SDK。
+本页描述当前带版本的 wire 接口：Relay protocol 3 源码、LAN/Watch protocol 7、动作 profile format 1，以及本地 Codex Hook。协议版本要求精确匹配，不自动降级。`apps/WristRemote/Shared` 下的 Swift 文件只是 App 内部实现和测试 target，不是对外导出的 SwiftPM SDK。
+
+当前个人版设置 `WRISTREMOTE_PRIVATE_ONLY = YES` 与 `.invalid` Relay endpoint，因此下面的 Relay API 只是供另行安全审查版本使用的未启用参考，不是个人版产物会调用的 endpoint。
 
 ## Relay HTTP/WSS API
 
@@ -100,13 +102,15 @@ LAN 使用 `_wristremote._tcp` 与 TCP `60927`。握手、六位确认和加密�
 
 - `buttonEvent`：command + press/release + profile revision。
 - `voiceStart` / `voiceStop`：stream ID、语音 intent 和可选任务 identity。
+- `audio` / `audioAck`：受限 PCM 分包及确认；只有 Mac 已投递后才推进，损坏的音频流会取消而不是重放。
 - `requestStatus` / `status`：连接、映射、收藏、标题、语音、任务和 Relay provisioning。
 - `favoritesUpdate`：四个收藏按钮。
 - `codexTaskSnapshot`：任务 snapshot 或明确 clear tombstone。
-- `voiceOutcome`：转写和最终音频确认。
-- `codexReplySubmit`：已确认文本、submission ID 和精确任务 identity。
+- `voiceOutcome`：普通前台听写转写，或最终 delivered/failed 结果。Codex 语音回执不包含转写；Bridge 从 Codex 联网转写服务取得文字，再经本机 app-server 排入所选任务。队列回执不等于任务完成。
+- Codex catalog/target 消息：列出已有目标，并通过独立 `thread/start` 解析“新建任务”；返回的 thread 注册为已有目标后才允许语音。
+- `codexReplySubmit`：兼容性文字提交接口，不是当前按住语音路径。
 
-仓库内 App 使用 `apps/WristRemote/Shared` 的内部构造器和校验器。外部集成应使用本文档化的 Hook 与 Relay 接口；不要把这些内部 Swift 类型当成公开 package API，也不要绕过 wire schema 手写生产消息。
+仓库内 App 使用 `apps/WristRemote/Shared` 的内部构造器和校验器。private-only 构建的外部集成应使用本文档化的本机 Hook；不要把这些内部 Swift 类型当成公开 package API，不要绕过 wire schema 手写生产消息，也不要为绕过私网连接而启用未激活的 Relay 接口。
 
 ## 动作 profile format 1
 

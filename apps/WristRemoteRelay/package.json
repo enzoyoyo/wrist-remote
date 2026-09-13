@@ -1,6 +1,6 @@
 {
   "name": "wrist-remote-relay",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -13,10 +13,10 @@
     "check": "npm run cf-typegen && npm run typecheck && npm test"
   },
   "devDependencies": {
-    "@cloudflare/vitest-plugin": "1.0.0",
+    "@cloudflare/vitest-plugin": "1.1.8",
     "@types/node": "26.3.0",
     "typescript": "7.0.2",
     "vitest": "4.1.11",
-    "wrangler": "4.125.0"
+    "wrangler": "4.131.1"
   }
 }

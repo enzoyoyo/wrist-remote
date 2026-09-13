@@ -25,19 +25,31 @@ trap cleanup EXIT
   exit 1
 }
 
+bridge_bundle_identifier="$(
+  /usr/bin/sed -nE \
+    's/^[[:space:]]*WRISTREMOTE_BRIDGE_BUNDLE_IDENTIFIER[[:space:]]*=[[:space:]]*([^[:space:]#]+).*$/\1/p' \
+    "$LOCAL_CONFIG" | /usr/bin/tail -n 1
+)"
 bundle_prefix="$(
   /usr/bin/sed -nE \
     's/^[[:space:]]*WRISTREMOTE_BUNDLE_PREFIX[[:space:]]*=[[:space:]]*([^[:space:]#]+).*$/\1/p' \
     "$LOCAL_CONFIG" | /usr/bin/tail -n 1
 )"
-[[ -n "$bundle_prefix" && "$bundle_prefix" != *'.example.'* && "$bundle_prefix" != example.* ]] || {
-  print -u2 -- "Configure a unique Wrist Remote Bundle prefix first."
+if [[ -z "$bridge_bundle_identifier" ]]; then
+  [[ -n "$bundle_prefix" && "$bundle_prefix" != *'.example.'* && "$bundle_prefix" != example.* ]] || {
+    print -u2 -- "Configure a unique Wrist Remote Bundle prefix first."
+    exit 1
+  }
+  bridge_bundle_identifier="${bundle_prefix}.bridge"
+fi
+[[ "$bridge_bundle_identifier" =~ '^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)+$' ]] || {
+  print -u2 -- "The configured Mac Bridge Bundle identifier is invalid."
   exit 1
 }
 
 token="$(/usr/bin/security find-generic-password \
   -a bearer-token-v1 \
-  -s "${bundle_prefix}.bridge.codex-hook" \
+  -s "${bridge_bundle_identifier}.codex-hook" \
   -w 2>/dev/null)" || {
   print -u2 -- "Open WristRemoteBridge once so it can create the local hook token."
   exit 1
