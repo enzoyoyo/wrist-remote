@@ -161,6 +161,7 @@ actor CodexConversationIdempotencyLedger {
     enum PersistenceFault: Equatable, Sendable {
         case none
         case failCompletion
+        case failAbort
     }
 
     enum BeginResult: Equatable, Sendable {
@@ -339,6 +340,41 @@ actor CodexConversationIdempotencyLedger {
     func finishWithoutReceipt(submissionID: UUID, fingerprint: String) {
         guard records[submissionID]?.fingerprint == fingerprint else { return }
         activeSubmissionIDs.remove(submissionID)
+    }
+
+    /// Only the active caller with proof that queue/add was never attempted may
+    /// release its reservation. Historical/uncertain records are never cleared.
+    func abortBeforeQueue(submissionID: UUID, fingerprint: String) throws {
+        guard !loadFailed,
+              let record = records[submissionID],
+              record.stage == .prepared,
+              record.fingerprint == fingerprint,
+              activeSubmissionIDs.contains(submissionID)
+        else { throw CodexConversationServiceError.idempotencyLedgerUnavailable }
+
+        defer { activeSubmissionIDs.remove(submissionID) }
+        var candidate = LedgerState(
+            records: records,
+            completedSubmissionIDs: completedSubmissionIDs
+        )
+        candidate.records.removeValue(forKey: submissionID)
+        do {
+            try Self.validate(candidate, limits: limits)
+            if persistenceFault == .failAbort {
+                throw CodexConversationServiceError.idempotencyLedgerUnavailable
+            }
+            if let fileURL {
+                try Self.persist(candidate, fileURL: fileURL, limits: limits)
+            }
+            let requestMapping = try Self.validatedRequestMapping(for: candidate.records)
+            records = candidate.records
+            completedSubmissionIDs = candidate.completedSubmissionIDs
+            submissionIDByRequestID = requestMapping
+        } catch {
+            // Keep both the in-memory and durable reservation if deletion
+            // cannot be committed. A retry must not silently bypass the ledger.
+            throw CodexConversationServiceError.idempotencyLedgerUnavailable
+        }
     }
 
     private func begin(
@@ -808,12 +844,19 @@ actor CodexConversationService {
                 validateBeforeQueue: validateBeforeQueue
             )
         } catch {
+            if let knownNotQueued = error as? CodexNativeVoiceError {
+                // queueLocalAudio emits this type only before queue/add. Do
+                // not infer non-delivery from arbitrary transport failures.
+                try await ledger.abortBeforeQueue(
+                    submissionID: request.submissionID,
+                    fingerprint: fingerprint
+                )
+                throw knownNotQueued
+            }
             await ledger.finishWithoutReceipt(
                 submissionID: request.submissionID,
                 fingerprint: fingerprint
             )
-            if let error = error as? CodexNativeVoiceError { throw error }
-            if error is CancellationError { throw CodexNativeVoiceError.cancelled }
             throw CodexConversationServiceError.outcomeUnknown
         }
 

@@ -1,12 +1,12 @@
 # Wrist Remote
 
-Wrist Remote 是一套以隐私和隔离为前提的 Apple Watch → macOS 遥控方案，由 Apple Watch App、iPhone 伴侣 App 和 Mac Bridge 组成。仓库当前的个人构建是仅私有网络版：支持局域网和可选 Tailscale 直连，公网 Relay 被禁用。
+Wrist Remote 是一套以隐私和隔离为前提的 iPhone 与 Apple Watch 遥控 macOS 方案，由 Apple Watch App、iPhone App 和 Mac Bridge 组成。默认构建仅使用私有网络：支持局域网和可选的 iPhone Tailscale 路由，公网 Relay 被禁用。
 
 [English](README.en.md) · [文档目录](docs/zh-CN/getting-started.md)
 
 ## 功能
 
-- iPhone 手机遥控面板，与 Apple Watch 共用按键映射；Mac 扫码配对入口及手机、手表独立连接状态。
+- iPhone 12 键手机遥控面板，与 Apple Watch 共用全部 36 个手势映射槽；Mac 扫码配对入口及手机、手表独立连接状态。
 - Apple Watch 前台局域网直连，使用独立设备身份；手机和手表可以同时连接。按键提供执行回执，未确认的操作不会在重连后补发。
 - 12 个虚拟按键，每个按键都有单击、双击、长按，共 36 个独立映射槽。
 - 键盘按键、组合快捷键、音量与媒体、显示桌面、App 切换等系统动作。
@@ -87,15 +87,16 @@ make install-devices
 
 脚本会自动选择唯一可用的 iPhone、Apple Watch 和 Apple Development 身份，临时构建、校验描述文件、安装并启动。若发现多个候选设备或 Team，会停止并要求你只为本次命令提供环境变量，避免装错设备。已有安装必须按[配置参考](docs/zh-CN/configuration.md#iphone-与-watch-受控原位升级)设置两个经核实的精确移动端 Bundle ID；门禁会核对当前 Team、历史 profile 和两台真机的现装身份，避免生成重复 App 或丢失 Bundle 派生的 Keychain 状态。
 
-Apple 登录、设备信任、开发者模式、辅助功能、麦克风和语音识别权限均必须由用户在系统界面确认。语音识别权限只服务于普通前台听写，Codex 原始语音不使用它。脚本不会绕过这些安全机制。
+Apple 登录、设备信任、开发者模式、辅助功能、麦克风和语音识别权限均必须由用户在系统界面确认。语音识别权限只服务于普通前台听写，Codex 联网语音转写不使用它。脚本不会绕过这些安全机制。
 
 ## 使用方法
 
 1. 打开 Mac Bridge，允许本地网络和辅助功能权限；只有需要普通前台听写时才授予语音识别权限。
-2. 在 iPhone 伴侣 App 中连接 Mac；首次使用，或从尚未固定 Mac 身份的旧版本升级后，需要在 iPhone 与 Mac 核对同一个六位码并由两端分别批准。成功后 iPhone 固定 Mac 身份，Mac 固定 iPhone 身份。
-3. 在 iPhone 的自定义界面中调整四个收藏位置，以及每个按键的单击、双击和长按动作。
+2. 在 Mac Bridge 显示配对二维码，用 iPhone 系统相机扫描；也可使用自动发现或导入配对链接。首次使用，或从尚未固定 Mac 身份的旧版本升级后，需要在 iPhone 与 Mac 核对同一个六位码并由两端分别批准。二维码本身不会授权设备。成功后 iPhone 固定 Mac 身份，Mac 固定 iPhone 身份。
+3. 在 iPhone 的自定义界面中调整四个收藏位置，以及每个按键的单击、双击和长按动作，再从首页进入“打开手机遥控”。手机和手表共用 12 个按键、36 个映射槽。
 4. 如要启动自定义 App，先在 Mac Bridge 点击“添加 App…”，再在 iPhone 中选择该 App 配置。
-5. 配对 iPhone 会先给局域网 0.9 秒连接时间。显式配置 Tailscale 后，若局域网届时尚未 ready，则同时启动连接 Mac 官方 Tailscale 专用 IP 的候选链路，并采用首个 ready 的链路。仅私有网络构建中，iPhone 不可达时不提供 Watch 独立蜂窝控制。
+5. 如需 Watch 局域网按键直连，在手表的“遥控连接”中启用“直接连接 Mac”，并在 Mac 批准独立的手表配对码。使用时保持手表 App 在前台；语音仍需要 iPhone 中转。详见[手机与 Watch 遥控连接](docs/zh-CN/phone-watch-connection.md)。
+6. 配对 iPhone 会先给局域网 0.9 秒连接时间。显式配置 Tailscale 后，若局域网届时尚未 ready，则同时启动连接 Mac 官方 Tailscale 专用 IP 的候选链路，并采用首个 ready 的链路。仅私有网络构建中，iPhone 不可达时不提供 Watch 独立蜂窝控制。
 
 ## Tailscale 私有网络（可选）
 
@@ -107,9 +108,11 @@ Apple 登录、设备信任、开发者模式、辅助功能、麦克风和语�
 
 ## 仅私有网络构建禁用公网 Relay
 
-仓库跟踪的配置和本地配置示例都设置 `WRISTREMOTE_PRIVATE_ONLY = YES`，并保留 `.invalid` Relay URL。这是两道独立门禁：只改 URL 不能启用公网路径，只改构建标志也仍会被 `.invalid` 阻止。Relay 源码仍保留给需要单独安全评审的变体，但它不是当前个人构建的运行时选项。不得用 Funnel、端口转发或公网代理替代。
+仓库跟踪的配置和本地配置示例都设置 `WRISTREMOTE_PRIVATE_ONLY = YES`，并保留 `.invalid` Relay URL。这是两道独立门禁：只改 URL 不能启用公网路径，只改构建标志也仍会被 `.invalid` 阻止。Relay 源码仍保留给需要单独安全评审的变体，但它不是默认构建的运行时选项。不得用 Funnel、端口转发或公网代理替代。
 
 ## Codex 集成（可选）
+
+在手表选择已有任务，或先创建独立任务，再按住录音、松开发送。录音经 iPhone 到达 Mac，使用已登录账号的 Codex 第一方联网服务转写。Bridge 再次核对目标后，通过本机 app-server 把文字排入这个精确任务。这需要互联网，不使用 macOS Speech 或剪贴板。队列回执表示已提交，不代表任务完成。
 
 Bridge 只监听 `127.0.0.1:60928/codex-hook`，并要求随机 Bearer Token。Token 首次启动时生成并保存到 Keychain。`scripts/codex-notify.sh` 会安全读取 Token 并把 Codex Hook 的 JSON 从 stdin 转发给 Bridge，不会把 Token 写进仓库或 shell 历史。
 
@@ -142,6 +145,7 @@ Bridge 只监听 `127.0.0.1:60928/codex-hook`，并要求随机 Bearer Token。T
 - Codex Hook 仅限回环地址、大小受限、两秒超时并需要 Bearer Token。
 - 选择“新建任务”时，先使用不含 fork/parent 的 `thread/start` 建立独立任务，再将结果注册为 existing 目标；目标未 ready 前不允许开始语音。
 - Codex 语音经实时私有链路传输 PCM，在 Mac 写入只有所有者可读写的临时 WAV；Codex 第一方服务联网转写后，文字经本机 app-server 排入精确目标。凭据、转写、路径和音频不进入 Bridge 日志或幂等账本。已排队不代表任务完成，转写失败会明确显示未发送。
+- 确认尚未入队的转写失败会安全释放本次投递记录，避免持续失败耗尽账本容量；已入队或结果未知时仍保留防重复保护。这不会自动重试，也不会清理历史未知记录。
 - 连续录音的每个分包只有在 Mac 确认接收后才向前推进。断线时 fail closed，删除部分录音，不会在重连后自动补发。
 - 普通听写会短暂使用 macOS 通用剪贴板向前台 App 粘贴文本，随后在剪贴板仍保持该值时恢复原内容。
 - Codex 完成通知使用通用文案，不携带任务标题、摘要或会话标识。
@@ -157,7 +161,7 @@ Bridge 只监听 `127.0.0.1:60928/codex-hook`，并要求随机 Bearer Token。T
 - 从尚未固定 Mac 身份的旧版本升级时，需要完成一次双端明确配对。若确认是 Mac 重装或 Keychain 重置导致身份改变，可在 iPhone App 中使用“忘记已信任的 Mac”，再由两端重新核对并批准六位码。若通过“重置此 iPhone 的配对身份”有意更换 iPhone 安装身份，Mac 会把它视为新 iPhone 并要求再次批准；不要用任一重置操作绕过来源不明的身份警告。
 - iOS/watchOS 没有可供所有开发者直接复用的通用签名包；每位开发者必须使用自己的 Apple Team。
 - 初版只发布源码，不发布由维护者证书签名的 App、IPA、描述文件或归档。
-- Codex 会话列表、独立任务创建、语音目标锁定、原始音频投递、断线失败关闭和发送回执仍需在目标 Mac、iPhone 和 Watch 上完成真机端到端验收；自动测试不能代替这一步。
+- Codex 会话列表、独立任务创建、语音目标锁定、联网转写与文字投递、断线失败关闭和发送回执仍需在目标 Mac、iPhone 和 Watch 上完成真机端到端验收；自动测试不能代替这一步。
 
 ## 许可证与商标
 

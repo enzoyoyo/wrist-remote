@@ -1,16 +1,16 @@
 # Wrist Remote
 
-Private-by-design Apple Watch remote control for macOS, with an iPhone companion and a Mac bridge. The checked-in build is private-only: LAN and an optional Tailscale direct route are supported, while the public relay is disabled by both build metadata and the reserved `.invalid` endpoint.
+Private-by-design iPhone and Apple Watch remote control for macOS, with a dedicated Mac bridge. The checked-in build is private-only: LAN and an optional iPhone Tailscale route are supported, while the public relay is disabled by both build metadata and the reserved `.invalid` endpoint.
 
 [中文说明](README.zh-CN.md) · [English documentation](README.en.md)
 
-Wrist Remote provides 12 virtual buttons with independent single-click, double-click, and long-press mappings. It supports keyboard shortcuts, media controls, launching developer-selected Mac apps, haptic feedback, foreground Chinese dictation, and optional Codex task summaries plus original-audio input.
+Wrist Remote provides 12 virtual buttons on iPhone and Apple Watch, sharing 36 independent single-click, double-click, and long-press mappings. It supports keyboard shortcuts, media controls, launching explicitly selected Mac apps, haptic feedback, foreground Chinese dictation, and optional Codex task summaries and voice input. Codex voice uses the signed-in account's online transcription service, then queues text to the selected task.
 
 The private-only build gives LAN a head start and may use a separately enabled Tailscale listener. The LAN listener binds to one concrete, non-publicly-routable address on an approved non-tunnel local interface; the Tailscale listener binds only an official Tailscale-range `utun` address and accepts only Tailscale-range sources. Neither route opens a public inbound port, and Funnel, port forwarding, public proxies, and public wildcard listeners are unsupported.
 
 ## Quick start
 
-iPhone can now act as a remote itself, with 12 buttons and 36 gesture mappings shared with Apple Watch. Scan the Mac bridge's pairing QR code, compare the six-digit code, and approve both ends. Apple Watch can send buttons directly over the local network while its app is foregrounded; its independent identity needs separate approval. Phone and Watch can stay connected together, with per-device status and authenticated action receipts. Watch voice still uses the iPhone relay, and Watch direct control does not add a public or Tailscale route.
+iPhone can act as a remote itself, with 12 buttons and 36 gesture mappings shared with Apple Watch. Scan the Mac bridge's pairing QR code using the iPhone system camera, compare the six-digit code, and approve both ends; the QR code alone does not authorize a device. Open the phone remote from the iPhone home screen. Apple Watch can send buttons directly over LAN HTTP `60929` while its app is foregrounded; enable direct Mac connection on Watch and approve its independent identity separately. Phone and Watch can stay connected together, with per-device status and authenticated action receipts. Watch voice still uses the iPhone relay, and Watch direct control does not add a public or Tailscale route.
 
 See [phone and Watch setup](docs/en/phone-watch-connection.md) for pairing, connection paths, and execution confirmation.
 

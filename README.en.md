@@ -1,12 +1,12 @@
 # Wrist Remote
 
-Wrist Remote is a privacy-first Apple Watch → macOS remote-control stack consisting of an Apple Watch app, an iPhone companion, and a Mac bridge. The checked-in personal build is private-only: it supports LAN and an optional Tailscale direct route, while public relay operation is disabled.
+Wrist Remote is a privacy-first iPhone and Apple Watch remote-control system for macOS, consisting of an Apple Watch app, an iPhone app, and a Mac bridge. The default build is private-only: it supports LAN and an optional iPhone Tailscale route, while public relay operation is disabled.
 
 [中文](README.zh-CN.md) · [Documentation index](docs/en/getting-started.md)
 
 ## Features
 
-- An iPhone remote panel sharing mappings with Apple Watch, plus Mac pairing QR codes and independent phone/Watch connection status.
+- A 12-button iPhone remote panel sharing all 36 gesture mappings with Apple Watch, plus Mac pairing QR codes and independent phone/Watch connection status.
 - Foreground Apple Watch button control directly over LAN with a separate device identity. Phone and Watch may connect together; authenticated action receipts distinguish confirmed execution from unconfirmed requests, which are never replayed after reconnect.
 - 12 virtual buttons, each with independent single-click, double-click, and long-press actions: 36 mapping slots in total.
 - Keyboard keys and shortcuts, media and volume control, Show Desktop, and app switching.
@@ -80,15 +80,16 @@ make install-devices
 
 The installer selects exactly one available iPhone, Apple Watch, and Apple Development identity, then builds, validates provisioning profiles, installs, and launches both apps. It fails closed on ambiguous devices or Teams. An existing installation must follow the [controlled in-place upgrade](docs/en/configuration.md#controlled-iphone-and-watch-in-place-upgrade) with both verified exact mobile Bundle IDs; the gate checks the current Team, historical profiles, and live identity on both devices to avoid a duplicate app or loss of Bundle-derived Keychain state.
 
-Apple login, device trust, Developer Mode, Accessibility, microphone, and speech-recognition permission require user confirmation. Speech Recognition is used only for foreground dictation, not Codex original-audio input. The scripts do not bypass operating-system security prompts.
+Apple login, device trust, Developer Mode, Accessibility, microphone, and speech-recognition permission require user confirmation. Speech Recognition is used only for foreground dictation, not Codex online voice transcription. The scripts do not bypass operating-system security prompts.
 
 ## Usage
 
 1. Open the Mac bridge and grant Local Network and Accessibility permissions. Grant Speech Recognition only if foreground dictation is needed.
-2. Connect from the iPhone companion. On first use or after upgrading from a release without Mac identity pinning, compare the same six-digit code and approve the connection on both the iPhone and Mac. The iPhone then pins the Mac identity and the Mac pins the iPhone identity.
-3. Configure four favorites and each button's three gestures in the iPhone app.
+2. Display the pairing QR code in the Mac bridge and scan it with the iPhone system camera; automatic discovery or pairing-link import is also available. On first use or after upgrading from a release without Mac identity pinning, compare the same six-digit code and approve the connection on both iPhone and Mac. The QR code alone does not authorize a device. The iPhone then pins the Mac identity and the Mac pins the iPhone identity.
+3. Configure four favorites and each button's three gestures in the iPhone app, then open the phone remote from its home screen. Phone and Watch share the 12 buttons and 36 mapping slots.
 4. To launch an app, add it in the Mac bridge first, then select that app profile in the iPhone mapping editor.
-5. The paired iPhone gives LAN a 0.9-second head start. After explicit Tailscale setup, it also starts a candidate to the Mac's official Tailscale IP when LAN is not yet ready; the first-ready route is adopted. The private-only build deliberately does not provide independent cellular-Watch control without a reachable iPhone.
+5. For Watch LAN buttons, enable direct Mac connection in the Watch remote connection settings and approve its separate pairing code on Mac. Keep the Watch app in the foreground; voice still requires the iPhone relay. See [phone and Watch setup](docs/en/phone-watch-connection.md).
+6. The paired iPhone gives LAN a 0.9-second head start. After explicit Tailscale setup, it also starts a candidate to the Mac's official Tailscale IP when LAN is not yet ready; the first-ready route is adopted. The private-only build deliberately does not provide independent cellular-Watch control without a reachable iPhone.
 
 ## Optional Tailscale private network
 
@@ -100,9 +101,11 @@ Read [docs/en/tailscale-private-network.md](docs/en/tailscale-private-network.md
 
 ## Public relay is disabled in the private-only build
 
-The tracked configuration and the local example both set `WRISTREMOTE_PRIVATE_ONLY = YES` and retain the `.invalid` relay URL. These are independent gates: changing only the URL cannot enable a public path, and changing only the build flag still leaves provisioning disabled. Relay source remains in the repository for separately reviewed variants, but it is not a runtime option in this personal build. Do not use Funnel, port forwarding, or a public proxy as a substitute.
+The tracked configuration and the local example both set `WRISTREMOTE_PRIVATE_ONLY = YES` and retain the `.invalid` relay URL. These are independent gates: changing only the URL cannot enable a public path, and changing only the build flag still leaves provisioning disabled. Relay source remains in the repository for separately reviewed variants, but it is not a runtime option in the default build. Do not use Funnel, port forwarding, or a public proxy as a substitute.
 
 ## Optional Codex integration
+
+Select an existing task on Watch, or create an independent task first, then hold to record and release to send. The recording travels through iPhone to Mac; Codex's first-party online service transcribes it using the signed-in account. After checking the destination again, the Bridge queues text to that exact task through local app-server. Internet access is required; macOS Speech and the clipboard are not used. A queue receipt confirms submission, not task completion.
 
 The bridge listens only on `127.0.0.1:60928/codex-hook` and requires a random per-installation Bearer token stored in Keychain. `scripts/codex-notify.sh` retrieves that token and forwards hook JSON from stdin without placing the token in the repository or shell history.
 
@@ -135,6 +138,7 @@ API examples are in [docs/en/api.md](docs/en/api.md). Contribution instructions 
 - Codex hooks are loopback-only, size-limited, timeout-bounded, and Bearer-authenticated.
 - Selecting **New task** first performs an independent `thread/start` with no fork or parent, then registers the result as an existing target; recording remains disabled until that exact target is ready.
 - Codex voice streams PCM through the live private route and writes an owner-only temporary WAV on the Mac. Codex's first-party online service transcribes it, then local app-server queues text to the exact task. Credentials, transcript, path and audio stay out of Bridge logs and ledgers. Queued does not mean completed; transcription failures explicitly report not sent.
+- A transcription failure confirmed to occur before queueing safely releases its submission record, so repeated failures do not exhaust ledger capacity. Queued or uncertain results retain duplicate-submission protection; this does not enable automatic retries or clear historical uncertain records.
 - Each continuous-stream packet advances only after the Mac acknowledges acceptance. A disconnect fails closed, deletes the partial recording, and never automatically replays it.
 - General dictation briefly uses the macOS clipboard to paste into the foreground app, then conditionally restores the previous clipboard contents.
 - Codex completion notifications use generic text and carry no task title, summary, or conversation identifiers.
@@ -150,7 +154,7 @@ Read [SECURITY.md](SECURITY.md), [PRIVACY.md](PRIVACY.md), and [THREAT_MODEL.md]
 - Upgrading from a version that did not pin the Mac requires one explicit two-ended pairing. If an intentional Mac reinstall or Keychain reset changes the identity later, use **Forget trusted Mac** in the iPhone app, then compare and approve the new six-digit code on both ends. If the iPhone installation identity itself is intentionally reset through **Reset this iPhone's pairing identity**, the Mac treats it as a new iPhone and must approve it again. Never use either reset to bypass an unexpected identity warning.
 - iOS/watchOS apps require each developer's own Apple signing identity; there is no universal installable IPA.
 - The initial release ships source only, not maintainer-signed applications or provisioning artifacts.
-- Conversation listing, independent task creation, destination locking, original-audio delivery, disconnect fail-closed behavior, and receipts still require end-to-end acceptance on the intended Mac, iPhone, and Watch; automated tests do not replace this gate.
+- Conversation listing, independent task creation, destination locking, Codex transcription and text delivery, disconnect fail-closed behavior, and receipts still require end-to-end acceptance on the intended Mac, iPhone, and Watch; automated tests do not replace this gate.
 
 ## License and trademarks
 

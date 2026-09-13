@@ -462,6 +462,224 @@ final class CodexAppServerClientTests: XCTestCase {
         XCTAssertFalse(try fixture.inputObjects().contains { $0["method"] as? String == "thread/queue/add" })
     }
 
+    @MainActor
+    func testPreQueueRateLimitsReleasePersistentCapacityAndAllowManualRetryAfterRestart() async throws {
+        let fixture = try FakeCodexAppServer(behavior: repeatingVoiceAuthentication)
+        defer { fixture.remove() }
+        let recording = try makeVoiceLedgerRecording(in: fixture.directoryURL)
+        let ledgerURL = fixture.directoryURL.appendingPathComponent("voice-ledger.json")
+        let limits = CodexConversationIdempotencyLedger.Limits(maximumRecordCount: 2, maximumFileBytes: 4_096)
+        let transport = StubCodexVoiceTransport(status: 429)
+        let client = CodexAppServerClient(
+            executableURL: fixture.executableURL, voiceTranscriber: .init(transport: transport)
+        )
+        let service = try CodexConversationService(
+            client: client, workspaces: [], fingerprintKey: fingerprintKey,
+            ledger: .init(fileURL: ledgerURL, limits: limits)
+        )
+        let ids = (0..<4).map { _ in UUID() }
+        for id in ids + [ids[0]] {
+            await assertVoiceError(.rateLimited) {
+                try await service.submitAudio(.init(
+                    submissionID: id, threadID: threadID,
+                    fileURL: recording.fileURL, sha256Hex: recording.sha256Hex
+                ))
+            }
+        }
+        let restarted = try CodexConversationService(
+            client: client, workspaces: [], fingerprintKey: fingerprintKey,
+            ledger: .init(fileURL: ledgerURL, limits: limits)
+        )
+        for id in [ids[0], UUID()] {
+            await assertVoiceError(.rateLimited) {
+                try await restarted.submitAudio(.init(
+                    submissionID: id, threadID: threadID,
+                    fileURL: recording.fileURL, sha256Hex: recording.sha256Hex
+                ))
+            }
+        }
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 7)
+        XCTAssertFalse(try fixture.inputObjects().contains { $0["method"] as? String == "thread/queue/add" })
+        XCTAssertFalse(try String(contentsOf: ledgerURL, encoding: .utf8).contains(recording.fileURL.path))
+    }
+
+    @MainActor
+    func testKnownPreQueueTargetCancellationAndTranscriptFailuresCanBeRetried() async throws {
+        for expected in [CodexNativeVoiceError.targetChanged, .cancelled, .responseTooLarge] {
+            let fixture = try FakeCodexAppServer(behavior: repeatingVoiceAuthentication)
+            defer { fixture.remove() }
+            let recording = try makeVoiceLedgerRecording(in: fixture.directoryURL)
+            let transport = StubCodexVoiceTransport(text: "测试语音")
+            var clientLimits = CodexAppServerClient.Limits()
+            if expected == .responseTooLarge { clientLimits.maximumMessageBytes = 3 }
+            let service = try CodexConversationService(
+                client: CodexAppServerClient(
+                    executableURL: fixture.executableURL, limits: clientLimits,
+                    voiceTranscriber: .init(transport: transport)
+                ), workspaces: [], fingerprintKey: fingerprintKey,
+                ledger: .init(
+                    fileURL: fixture.directoryURL.appendingPathComponent("ledger.json"),
+                    limits: .init(maximumRecordCount: 1, maximumFileBytes: 4_096)
+                )
+            )
+            let request = CodexExistingConversationAudioSubmission(
+                submissionID: UUID(), threadID: threadID,
+                fileURL: recording.fileURL, sha256Hex: recording.sha256Hex
+            )
+            for _ in 0..<2 {
+                await assertVoiceError(expected) {
+                    try await service.submitAudio(request, validateBeforeQueue: {
+                        if expected == .targetChanged { throw CodexNativeVoiceError.targetChanged }
+                        if expected == .cancelled { throw CancellationError() }
+                    })
+                }
+            }
+            let requests = await transport.requests
+            XCTAssertEqual(requests.count, 2)
+            XCTAssertFalse(try fixture.inputObjects().contains { $0["method"] as? String == "thread/queue/add" })
+        }
+    }
+
+    @MainActor
+    func testAudioQueueWithoutReceiptStaysUnknownAndIsNeverReplayedAfterRestart() async throws {
+        let fixture = try FakeCodexAppServer(behavior: """
+        record_line
+        printf '%s\\n' '{"id":1,"result":{}}'
+        record_line
+        record_line
+        printf '%s\\n' '{"id":2,"result":{"authMethod":"chatgpt","authToken":"fake-test-only-token"}}'
+        record_line
+        exit 0
+        """)
+        defer { fixture.remove() }
+        let recording = try makeVoiceLedgerRecording(in: fixture.directoryURL)
+        let ledgerURL = fixture.directoryURL.appendingPathComponent("unknown-audio-ledger.json")
+        let transport = StubCodexVoiceTransport()
+        let client = CodexAppServerClient(
+            executableURL: fixture.executableURL, voiceTranscriber: .init(transport: transport)
+        )
+        let service = try CodexConversationService(
+            client: client, workspaces: [], fingerprintKey: fingerprintKey,
+            ledger: .init(fileURL: ledgerURL)
+        )
+        let request = CodexExistingConversationAudioSubmission(
+            submissionID: UUID(), threadID: threadID,
+            fileURL: recording.fileURL, sha256Hex: recording.sha256Hex
+        )
+        for _ in 0..<2 {
+            await assertServiceError(.outcomeUnknown) { try await service.submitAudio(request) }
+        }
+        let restarted = try CodexConversationService(
+            client: client, workspaces: [], fingerprintKey: fingerprintKey,
+            ledger: .init(fileURL: ledgerURL)
+        )
+        await assertServiceError(.outcomeUnknown) { try await restarted.submitAudio(request) }
+        XCTAssertEqual(fixture.launchCount(), 1)
+        XCTAssertEqual(try fixture.inputObjects().filter { $0["method"] as? String == "thread/queue/add" }.count, 1)
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+    }
+
+    func testLedgerAbortRejectsWrongFingerprintInactiveAndCompletedRecords() async throws {
+        let ledger = CodexConversationIdempotencyLedger()
+        let fingerprint = String(repeating: "a", count: 64)
+        let wrongFingerprint = String(repeating: "b", count: 64)
+        let activeID = UUID()
+        _ = try await ledger.beginExisting(submissionID: activeID, fingerprint: fingerprint)
+        await assertServiceError(.idempotencyLedgerUnavailable) {
+            try await ledger.abortBeforeQueue(submissionID: activeID, fingerprint: wrongFingerprint)
+        }
+        let stillActive = try await ledger.beginExisting(submissionID: activeID, fingerprint: fingerprint)
+        XCTAssertEqual(stillActive, .inProgress)
+        try await ledger.abortBeforeQueue(submissionID: activeID, fingerprint: fingerprint)
+        let released = try await ledger.beginExisting(submissionID: activeID, fingerprint: fingerprint)
+        XCTAssertEqual(released, .new)
+        await ledger.finishWithoutReceipt(submissionID: activeID, fingerprint: fingerprint)
+        await assertServiceError(.idempotencyLedgerUnavailable) {
+            try await ledger.abortBeforeQueue(submissionID: activeID, fingerprint: fingerprint)
+        }
+        let stillUnknown = try await ledger.beginExisting(submissionID: activeID, fingerprint: fingerprint)
+        XCTAssertEqual(stillUnknown, .unknownAfterSideEffect)
+
+        let completedID = UUID()
+        _ = try await ledger.beginExisting(submissionID: completedID, fingerprint: fingerprint)
+        let receipt = CodexConversationQueueReceipt(
+            submissionID: completedID, threadID: threadID, queuedSubmissionID: "completed-test-only"
+        )
+        try await ledger.complete(submissionID: completedID, fingerprint: fingerprint, receipt: receipt)
+        await assertServiceError(.idempotencyLedgerUnavailable) {
+            try await ledger.abortBeforeQueue(submissionID: completedID, fingerprint: fingerprint)
+        }
+        let stillCompleted = try await ledger.beginExisting(submissionID: completedID, fingerprint: fingerprint)
+        XCTAssertEqual(stillCompleted, .completed(receipt))
+    }
+
+    func testLedgerAbortPersistenceFailureKeepsReservationAndClearsActiveOwnership() async throws {
+        let fixture = try FakeCodexAppServer(behavior: "exit 0")
+        defer { fixture.remove() }
+        let fileURL = fixture.directoryURL.appendingPathComponent("failed-abort.json")
+        let limits = CodexConversationIdempotencyLedger.Limits(maximumRecordCount: 1, maximumFileBytes: 4_096)
+        let ledger = CodexConversationIdempotencyLedger(
+            fileURL: fileURL, persistenceFault: .failAbort, limits: limits
+        )
+        let id = UUID()
+        let fingerprint = String(repeating: "c", count: 64)
+        _ = try await ledger.beginExisting(submissionID: id, fingerprint: fingerprint)
+        let original = try Data(contentsOf: fileURL)
+        await assertServiceError(.idempotencyLedgerUnavailable) {
+            try await ledger.abortBeforeQueue(submissionID: id, fingerprint: fingerprint)
+        }
+        XCTAssertEqual(try Data(contentsOf: fileURL), original)
+        let inMemory = try await ledger.beginExisting(submissionID: id, fingerprint: fingerprint)
+        XCTAssertEqual(inMemory, .unknownAfterSideEffect)
+        await assertServiceError(.idempotencyLedgerUnavailable) {
+            try await ledger.beginExisting(submissionID: UUID(), fingerprint: fingerprint)
+        }
+        let restarted = CodexConversationIdempotencyLedger(fileURL: fileURL, limits: limits)
+        let onDisk = try await restarted.beginExisting(submissionID: id, fingerprint: fingerprint)
+        XCTAssertEqual(onDisk, .unknownAfterSideEffect)
+        await assertServiceError(.idempotencyLedgerUnavailable) {
+            try await restarted.abortBeforeQueue(submissionID: id, fingerprint: fingerprint)
+        }
+    }
+
+    private var repeatingVoiceAuthentication: String {
+        """
+        record_line
+        printf '%s\\n' '{"id":1,"result":{}}'
+        record_line
+        response_id=2
+        while record_line; do
+          printf '{"id":%s,"result":{"authMethod":"chatgpt","authToken":"fake-test-only-token"}}\\n' "$response_id"
+          response_id=$((response_id + 1))
+        done
+        """
+    }
+
+    @MainActor
+    private func makeVoiceLedgerRecording(in directory: URL) throws -> WatchCodexAudioInbox.FinalizedRecording {
+        let inbox = WatchCodexAudioInbox(directoryURL: directory.appendingPathComponent("synthetic-audio"))
+        let streamID = UUID()
+        try inbox.start(streamID: streamID)
+        XCTAssertTrue(inbox.append(samples: Array(repeating: 10, count: 960), streamID: streamID))
+        return try inbox.finish(streamID: streamID)
+    }
+
+    private func assertVoiceError<T>(
+        _ expected: CodexNativeVoiceError,
+        operation: () async throws -> T,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        do {
+            _ = try await operation()
+            XCTFail("Expected \(expected)", file: file, line: line)
+        } catch {
+            XCTAssertEqual(error as? CodexNativeVoiceError, expected, file: file, line: line)
+        }
+    }
+
     func testNewConversationRequestAndSubmissionAreIdempotent() async throws {
         let workspaceURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

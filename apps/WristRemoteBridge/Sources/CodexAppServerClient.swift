@@ -292,7 +292,9 @@ actor CodexAppServerClient {
             throw CodexNativeVoiceError.unavailable
         }
         return try withSession { session in
-            try Task.checkCancellation()
+            // This check is still before queue/add; later transport failures
+            // must remain untyped/uncertain so the service cannot release them.
+            if Task.isCancelled { throw CodexNativeVoiceError.cancelled }
             return try Self.queueMessage(
                 validatedMessage,
                 threadID: validatedThreadID,
