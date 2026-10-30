@@ -16,9 +16,6 @@ final class WristRemoteWatchUITests: XCTestCase {
         app = XCUIApplication()
         app.launch()
         openCodexFromControlCenter()
-        // A harmless title-area interaction gives XCTest a chance to handle
-        // the first-launch notification alert without activating a control.
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
     }
 
     private func openCodexFromControlCenter() {
