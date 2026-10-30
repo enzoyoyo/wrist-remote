@@ -57,6 +57,13 @@ final class WristControlProtocolTests: XCTestCase {
         XCTAssertTrue(gate.accept(.init(action: .click, issuedAt: 40_000), now: 40_000))
     }
 
+    func testReplayCannotReturnAfterClockMovesBackwards() {
+        var gate = WristControlReplayGate()
+        let command = WristControlCommand(action: .click, issuedAt: 19_000)
+        XCTAssertTrue(gate.accept(command, now: 20_000))
+        XCTAssertFalse(gate.accept(command, now: 19_500))
+    }
+
     func testCommandAndIndependentAudioModesSurviveWireEncoding() throws {
         for intent in [WatchVoiceIntent.recording, .wirelessMicrophone, .codexNativeDictation] {
             let wire = WristBridgeWireMessage(type: "voiceStart", voiceIntent: intent.rawValue)
@@ -84,6 +91,7 @@ final class WristControlProtocolTests: XCTestCase {
         XCTAssertTrue(state.apply(.sessionPlayPause)); XCTAssertTrue(state.isPlaying)
         XCTAssertTrue(state.apply(.nextPage)); XCTAssertEqual(state.page, 1)
         XCTAssertTrue(state.apply(.nextPage)); XCTAssertEqual(state.page, 2); XCTAssertFalse(state.isPlaying)
+        XCTAssertTrue(state.apply(.sessionPlayPause)); XCTAssertFalse(state.isPlaying)
         for _ in 0..<50 { _ = state.apply(.sessionFaster) }
         XCTAssertEqual(state.speed, 2)
         for _ in 0..<50 { _ = state.apply(.sessionSlower) }

@@ -43,6 +43,7 @@ final class WristRecordingLibrary {
             let values = try directory.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
             guard values.isDirectory == true, values.isSymbolicLink != true,
                   !manager.fileExists(atPath: url.path) else { throw RecordingError.storageUnavailable }
+            try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
             let settings: [String: Any] = [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
                 AVSampleRateKey: Double(Self.sampleRate),
@@ -112,7 +113,7 @@ struct WristAudioOutputDevice: Equatable, Identifiable {
     var isProtectedSharedDevice: Bool { id == "BlackHole2ch_UID" || name == "BlackHole 2ch" }
 
     /// Devices a user may pick for Watch audio; protected shared devices are hidden.
-    static func selectableOutputs() -> [Self] { virtualOutputs().filter { !$0.isProtectedSharedDevice } }
+    static func selectableOutputs() -> [Self] { virtualOutputs().filter { !$0.isProtectedSharedDevice && $0.hasInput } }
 
     static func virtualOutputs() -> [Self] {
         var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
@@ -200,6 +201,7 @@ final class WristLiveAudioOutput {
         stop()
         guard let device = WristAudioOutputDevice.virtualOutputs().first(where: { $0.id == deviceUID }) else { throw OutputError.missingDevice }
         guard !device.isProtectedSharedDevice else { throw OutputError.protectedDevice }
+        guard device.hasInput else { throw OutputError.missingDevice }
         let engine = AVAudioEngine()
         guard let unit = engine.outputNode.audioUnit else { throw OutputError.unavailable }
         var id = device.deviceID

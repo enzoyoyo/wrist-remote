@@ -35,6 +35,14 @@ final class WristReadingControllerTests: XCTestCase {
         XCTAssertNil(published.last!)
     }
 
+    func testWindowsAndLegacyLineEndingsSplitIntoParagraphs() {
+        let reader = WristReadingController(dependencies: .init(isConnected: { true }, publish: { _ in }, setReceiver: { _ in }))
+        reader.text = "First\r\n\r\nSecond\r\rThird"
+        reader.start()
+        XCTAssertEqual(reader.pages, ["First", "Second", "Third"])
+        reader.stop()
+    }
+
     func testConnectionLossEndsSessionAndRemovesReceiver() async throws {
         var connected = true
         var receiver: ((WristControlCommand) -> WristControlReceipt)?

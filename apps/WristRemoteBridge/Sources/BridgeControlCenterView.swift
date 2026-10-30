@@ -134,25 +134,7 @@ struct BridgeContentView: View {
             }
             Section("Codex 原生听写") {
                 Text("此功能尚未完成，当前版本不可用。")
-                Picker("专用虚拟音频设备", selection: offeredDevice($model.codexAudioOutputUID)) {
-                    Text("请选择独立设备").tag("")
-                    ForEach(model.audioOutputDevices) { device in Text(device.name).tag(device.id) }
-                }
-                if model.audioOutputDevices.isEmpty { noIndependentDeviceNote }
-                Picker("快捷键修饰键", selection: $model.codexShortcutModifiers) {
-                    Text("请选择").tag("")
-                    ForEach(BridgeAppModel.codexModifierOptions, id: \.0) { option in Text(option.0).tag(option.0) }
-                }
-                Picker("快捷键字母", selection: $model.codexShortcutKey) {
-                    Text("请选择").tag("")
-                    ForEach(BridgeAppModel.codexShortcutKeys, id: \.0) { key in Text(key.0).tag(key.0) }
-                }
-                Text("在 Codex 设置中，将「点按一次听写」设为同一快捷键，并把麦克风选为同一虚拟设备。原有 Fn 设置可保留。为保护其他遥控器，此处不能选无线麦正在使用的设备或 BlackHole 2ch。")
                     .foregroundStyle(.secondary)
-                Text("Codex 的麦克风设置也影响原有 Fn 听写。手表使用结束后，在 Codex 把麦克风切回原设备，Fn 即可继续使用原来的麦克风。")
-                    .font(.callout).foregroundStyle(.secondary)
-                Text("使用前确认 Codex 听写已停止，并让 Codex 处于前台；再在手表选择「Codex 听写」。开始和停止会发送快捷键，请在 Codex 检查听写和文字，文字不会自动发送。")
-                    .font(.callout).foregroundStyle(.secondary)
             }
             Section("保存录音") {
                 Text("手表选「保存录音」，以单声道 AAC（M4A）边收边存，16 kbps，每分钟约 150 KB。每段最多 115 秒，到时自动保存。音频只留在本机。")

@@ -233,6 +233,23 @@ final class WristDirectBridgeClientTests: XCTestCase {
         XCTAssertEqual(client.controlTargets.map(\.id), ["mac"])
     }
 
+    func testNewReadingTargetsNotifyWatchAfterLivenessRefresh() async throws {
+        let server = DirectBridgeTestServer()
+        let client = server.makeClient(pollInterval: 0.01)
+        var changes = 0
+        client.onChange = { changes += 1 }
+        client.configure(server.configuration); client.setSceneActive(true)
+        defer { client.setSceneActive(false) }
+        await waitUntil { client.isControlReady }
+        XCTAssertTrue(client.isControlReady)
+        let priorChanges = changes
+        server.additionalTarget = .init(id: "reading-test", name: "Reading", kind: .readingSession,
+                                        detail: "Fixture", actions: [.nextPage])
+        await waitUntil { client.controlTargets.contains(where: { $0.id == "reading-test" }) }
+        XCTAssertTrue(client.controlTargets.contains(where: { $0.id == "reading-test" }))
+        XCTAssertGreaterThan(changes, priorChanges)
+    }
+
     func testLostControlReceiptNeverReplaysAfterReconnect() async throws {
         let server = DirectBridgeTestServer()
         let client = server.makeClient()
@@ -252,11 +269,16 @@ final class WristDirectBridgeClientTests: XCTestCase {
         client.configure(server.configuration); client.setSceneActive(true)
         defer { client.setSceneActive(false) }
         await waitUntil { client.isReady }
-        do { _ = try await client.sendControl(.init(action: .click)); XCTFail("Old bridge must refuse") } catch {}
+        XCTAssertTrue(client.isReady)
+        XCTAssertFalse(client.isControlReady)
+        do { _ = try await client.sendControl(.init(action: .click)); XCTFail("Old bridge must refuse") }
+        catch { XCTAssertEqual(error as? WristDirectBridgeClientError, .notReady) }
         XCTAssertEqual(server.controlCount, 0)
         server.advertiseControls = true; client.reconnect()
-        await waitUntil { client.isReady }
-        do { _ = try await client.sendControl(.init(action: .click, issuedAt: 1)); XCTFail("Expired action must fail") } catch {}
+        await waitUntil { client.isControlReady }
+        XCTAssertTrue(client.isControlReady)
+        do { _ = try await client.sendControl(.init(action: .click, issuedAt: 1)); XCTFail("Expired action must fail") }
+        catch { XCTAssertEqual(error as? WristDirectBridgeClientError, .expired) }
         XCTAssertEqual(server.controlCount, 0)
     }
 
@@ -296,6 +318,7 @@ private final class DirectBridgeTestServer {
     var loseControlReceipt = false
     var controlCount = 0
     var lastControl: WristControlCommand?
+    var additionalTarget: WristControlTarget?
 
     var configuration: WristDirectBridgeConfiguration {
         .init(endpoint: "http://192.168.50.100:60929/v1/bridge",
@@ -406,6 +429,7 @@ private final class DirectBridgeTestServer {
                         profileRevision: 8, watchProfile: try profile.encodedBase64()))
                 }
                 response = WristBridgeWireMessage(type: "livenessAck", probeID: message.probeID)
+                response.controlTargets = [.init(id: "mac", name: "Test Mac", kind: .mac, detail: "Fixture", actions: [.pointer, .click])] + (additionalTarget.map { [$0] } ?? [])
             default:
                 throw WristDirectBridgeClientError.invalidResponse
             }

@@ -27,7 +27,8 @@ struct WristReadingSessionState: Codable, Equatable, Sendable {
         case .nextPage:
             page = min(pageCount - 1, page + 1)
             if page == pageCount - 1 { isPlaying = false }
-        case .sessionPlayPause: isPlaying.toggle()
+        case .sessionPlayPause:
+            if page == pageCount - 1 { isPlaying = false } else { isPlaying.toggle() }
         case .sessionFaster: speed = min(2, ((speed + 0.1) * 10).rounded() / 10)
         case .sessionSlower: speed = max(0.5, ((speed - 0.1) * 10).rounded() / 10)
         default: return false

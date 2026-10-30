@@ -5,6 +5,19 @@ import XCTest
 
 @MainActor
 final class ControlCenterTests: XCTestCase {
+    func testPreviewAudioSettingsUseOnlyTheInjectedDefaults() throws {
+        let suiteName = "wristremote.preview.test." + UUID().uuidString
+        let suite = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { suite.removePersistentDomain(forName: suiteName) }
+        let key = "WristRemote.liveAudioOutputUID"
+        let original = UserDefaults.standard.string(forKey: key)
+        let model = BridgeAppModel(preferences: BridgePreferences(defaults: suite, trustedIdentityStore: TestPreviewIdentityStore()),
+                                   isPresentationPreview: true, audioDefaults: suite)
+        model.selectedAudioOutputUID = "preview-device"
+        XCTAssertEqual(suite.string(forKey: key), "preview-device")
+        XCTAssertEqual(UserDefaults.standard.string(forKey: key), original)
+    }
+
     func testDeniedPermissionNeverPostsAnyInput() {
         var posts = 0
         let engine = MacControlEngine(dependencies: .init(trusted: { false },
@@ -72,6 +85,19 @@ final class ControlCenterTests: XCTestCase {
         XCTAssertThrowsError(try library.finish(id: cancelled))
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil).filter { $0.pathExtension == "m4a" }.count, 1)
         XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: root.path).contains { $0.hasSuffix(".wav") || $0.contains("partial") })
+    }
+
+    func testRecordingRestoresPrivatePermissionsOnExistingDirectory() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = WristRecordingLibrary(directory: root)
+        let id = UUID()
+        XCTAssertTrue(try library.start(id: id))
+        let permissions = try FileManager.default.attributesOfItem(atPath: root.path)[.posixPermissions] as? NSNumber
+        XCTAssertEqual(permissions?.intValue, 0o700)
+        library.cancel(id: id)
     }
 
     func testRecordingRejectsExistingFileWithoutDeletingIt() throws {
@@ -158,6 +184,17 @@ final class ControlCenterTests: XCTestCase {
         XCTAssertFalse(failed.accepted); XCTAssertNil(tv.target)
     }
 
+    func testInvalidTelevisionReconnectDiscardsPreviousTarget() async {
+        let tv = WristTelevisionAdapter { _, arguments in
+            .init(status: 0, output: arguments.last == "get-state" ? "device\n" : "connected")
+        }
+        await tv.connect(.init(name: "First", address: "192.168.10.20:5555", executablePath: "/test/adb"))
+        XCTAssertNotNil(tv.target)
+        await tv.connect(.init(name: "Invalid", address: "not-a-local-address", executablePath: "/test/adb"))
+        XCTAssertNil(tv.target)
+        XCTAssertFalse(tv.isConnected)
+    }
+
     func testTVRejectsPublicAddressesAndInjectionBeforeRunner() async {
         var calls = 0
         let tv = WristTelevisionAdapter { _, _ in calls += 1; return .init(status: 0, output: "device") }
@@ -166,4 +203,9 @@ final class ControlCenterTests: XCTestCase {
         }
         XCTAssertEqual(calls, 0)
     }
+}
+
+private struct TestPreviewIdentityStore: TrustedIdentityFingerprintStoring {
+    func load() -> TrustedIdentityFingerprintLoadResult { .loaded([]) }
+    func save(_ fingerprints: Set<String>) -> Bool { false }
 }

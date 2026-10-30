@@ -14,7 +14,7 @@ Watch audio requires the iPhone relay even when direct Mac control is available.
 
 For microphone output, select an available virtual output device in the Mac app and select the same device as the input in the target app. The system default input and output are not changed. BlackHole 2ch is intentionally refused to protect an existing audio route. Actual audio, latency, and background behavior require real-device validation.
 
-The separate Codex live-dictation mode is unfinished and disabled in this release. It would require an independent duplex virtual device. It sends a configurable toggle shortcut but cannot confirm whether Codex started or stopped listening; its complete audio and text path has not been validated. Changing the Codex microphone also affects its existing Fn dictation. Check and restore the Codex input device as needed. No text is submitted automatically by this mode.
+The separate Codex live-dictation mode is unfinished and disabled in this release. Existing Codex task voice input remains available.
 
 ## Television and reading
 

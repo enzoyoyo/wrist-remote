@@ -47,7 +47,7 @@ struct WatchControlCenterView: View {
         if [.voice, .recording, .microphone, .codexNative].contains(mode), !controller.canStartPrivateAudio {
             return "语音链路未就绪"
         }
-        if controller.controlFailed { return "操作未完成 · 查看更多" }
+        if controller.controlFailed { return usesCompactNavigation ? (controller.controlOutcome ?? "操作未完成") : "操作未完成 · 查看更多" }
         if controller.canSendControl && !modeMatchesTarget { return "请先选择对应设备" }
         return controller.canSendControl ? controller.remoteConnectionPathText : "未连接"
     }

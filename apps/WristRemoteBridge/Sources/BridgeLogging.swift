@@ -19,6 +19,7 @@ enum ListenFailure {
         if let networkError = error as? NWError,
            case let .posix(code) = networkError,
            code == .EADDRINUSE {
+            if port == 60_928 { return "端口 \(port) 已被占用：请检查占用后重新启动腕上遥控桥。" }
             return "端口 \(port) 已被占用：可能另一个腕上遥控桥还在退出，或别的程序占用了它。会自动重试。"
         }
         return error.localizedDescription

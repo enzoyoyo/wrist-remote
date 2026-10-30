@@ -104,7 +104,12 @@ final class WristTelevisionAdapter: ObservableObject {
 
     func connect(_ configuration: WristTelevisionConfiguration) async {
         guard !isBusy else { return }
-        guard configuration.isValid else { status = "请输入局域网地址与端口，并选择 adb 程序"; return }
+        guard configuration.isValid else {
+            disconnect()
+            status = "请输入局域网地址与端口，并选择 adb 程序"
+            onChange?()
+            return
+        }
         generation += 1; let ticket = generation
         self.configuration = configuration; isConnected = false; isBusy = true
         status = "正在连接电视"; onChange?()

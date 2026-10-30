@@ -84,7 +84,7 @@ enum WristControlFlightPolicy {
 struct WristControlReplayGate {
     private var seen: [UUID: Int64] = [:]
     mutating func accept(_ command: WristControlCommand, now: Int64) -> Bool {
-        seen = seen.filter { now >= $0.value && now - $0.value < 10_000 }
+        seen = seen.filter { now < $0.value || now - $0.value < 10_000 }
         guard command.isValid(now: now), seen[command.id] == nil, seen.count < 512 else { return false }
         seen[command.id] = now
         return true

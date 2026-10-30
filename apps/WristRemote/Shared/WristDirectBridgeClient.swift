@@ -68,7 +68,7 @@ final class WristDirectBridgeClient {
     private var requestInFlight = false
     private var sendWaiters: [CheckedContinuation<Void, Never>] = []
     private var pendingProfile: WatchActionProfileWire?
-    private(set) var controlTargets: [WristControlTarget] = []
+    private(set) var controlTargets: [WristControlTarget] = [] { didSet { if oldValue != controlTargets { onChange?() } } }
     private var supportsControlCenter = false
     private var macName = "Mac"
     private var applicationTitles: [String: String] = [:]
@@ -88,6 +88,7 @@ final class WristDirectBridgeClient {
     }
 
     var isReady: Bool { state == .ready && snapshot != nil && sceneActive }
+    var isControlReady: Bool { isReady && supportsControlCenter }
 
     func configure(_ value: WristDirectBridgeConfiguration?) {
         let validated = value?.validated()

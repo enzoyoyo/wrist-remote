@@ -57,35 +57,36 @@ final class BridgeAppModel: ObservableObject {
         (WatchCodexConversationCatalog?, String?) -> Void
     ] = []
     private let internetRelay: InternetRelayClient?
+    private let audioDefaults: UserDefaults
     @Published private(set) var audioOutputDevices: [WristAudioOutputDevice] = []
-    @Published var selectedAudioOutputUID: String = UserDefaults.standard.string(forKey: "WristRemote.liveAudioOutputUID") ?? "" {
+    @Published var selectedAudioOutputUID: String {
         didSet {
             guard oldValue != selectedAudioOutputUID else { return }
-            UserDefaults.standard.set(selectedAudioOutputUID, forKey: "WristRemote.liveAudioOutputUID")
+            audioDefaults.set(selectedAudioOutputUID, forKey: "WristRemote.liveAudioOutputUID")
             if activeVoiceContext?.intent == .wirelessMicrophone { finishVoiceWithFailure("音频输出已切换，无线麦已停止") }
             if activeVoiceContext?.intent == .codexNativeDictation && selectedAudioOutputUID == codexAudioOutputUID { finishVoiceWithFailure("音频输出冲突，请检查 Codex 听写状态") }
         }
     }
     // An empty device or key keeps native dictation disabled until explicitly configured.
-    @Published var codexAudioOutputUID: String = UserDefaults.standard.string(forKey: "WristRemote.codexAudioOutputUID") ?? "" {
+    @Published var codexAudioOutputUID: String {
         didSet {
-            UserDefaults.standard.set(codexAudioOutputUID, forKey: "WristRemote.codexAudioOutputUID")
+            audioDefaults.set(codexAudioOutputUID, forKey: "WristRemote.codexAudioOutputUID")
             if oldValue != codexAudioOutputUID, activeVoiceContext?.intent == .codexNativeDictation {
                 finishVoiceWithFailure("听写音频设备已变化，请检查 Codex 听写状态")
             }
         }
     }
-    @Published var codexShortcutKey: String = UserDefaults.standard.string(forKey: "WristRemote.codexShortcutKey") ?? "" {
+    @Published var codexShortcutKey: String {
         didSet {
-            UserDefaults.standard.set(codexShortcutKey, forKey: "WristRemote.codexShortcutKey")
+            audioDefaults.set(codexShortcutKey, forKey: "WristRemote.codexShortcutKey")
             if oldValue != codexShortcutKey, activeVoiceContext?.intent == .codexNativeDictation {
                 finishVoiceWithFailure("快捷键已变化，请检查 Codex 听写状态")
             }
         }
     }
-    @Published var codexShortcutModifiers: String = UserDefaults.standard.string(forKey: "WristRemote.codexShortcutModifiers") ?? "" {
+    @Published var codexShortcutModifiers: String {
         didSet {
-            UserDefaults.standard.set(codexShortcutModifiers, forKey: "WristRemote.codexShortcutModifiers")
+            audioDefaults.set(codexShortcutModifiers, forKey: "WristRemote.codexShortcutModifiers")
             if oldValue != codexShortcutModifiers, activeVoiceContext?.intent == .codexNativeDictation {
                 finishVoiceWithFailure("快捷键已变化，请检查 Codex 听写状态")
             }
@@ -159,8 +160,15 @@ final class BridgeAppModel: ObservableObject {
         gestureDispatcher: WatchGestureDispatcher? = nil,
         speechTranscriber: WatchSpeechTranscriber? = nil,
         codexAudioInbox: WatchCodexAudioInbox? = nil,
-        isPresentationPreview: Bool = false
+        isPresentationPreview: Bool = false,
+        audioDefaults: UserDefaults? = nil
     ) {
+        let settings = audioDefaults ?? (isPresentationPreview ? UserDefaults(suiteName: "dev.wristremote.presentation-preview")! : .standard)
+        self.audioDefaults = settings
+        self.selectedAudioOutputUID = settings.string(forKey: "WristRemote.liveAudioOutputUID") ?? ""
+        self.codexAudioOutputUID = settings.string(forKey: "WristRemote.codexAudioOutputUID") ?? ""
+        self.codexShortcutKey = settings.string(forKey: "WristRemote.codexShortcutKey") ?? ""
+        self.codexShortcutModifiers = settings.string(forKey: "WristRemote.codexShortcutModifiers") ?? ""
         let codexCoordinator = CodexTaskCoordinator(
             pinnedThreadID: preferences.codexPinnedThreadID
         )
@@ -202,7 +210,8 @@ final class BridgeAppModel: ObservableObject {
         self.internetRelay = internetRelay
         self.codexTaskStateRevision = codexTaskStateRevision
         codexPinnedThreadID = preferences.codexPinnedThreadID
-        codexHookReceiver = CodexHookReceiver(coordinator: codexCoordinator)
+        codexHookReceiver = CodexHookReceiver(coordinator: codexCoordinator,
+            bearerToken: isPresentationPreview ? nil : CodexHookTokenStore.loadOrCreate())
         speechLocaleIdentifier = self.speechTranscriber.recognitionLocaleIdentifier ?? "zh-CN"
         applicationProfiles = preferences.applicationProfiles
         tailnetAccessEnabled = preferences.tailnetAccessEnabled

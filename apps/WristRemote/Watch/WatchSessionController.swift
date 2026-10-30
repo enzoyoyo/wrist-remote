@@ -214,12 +214,12 @@ final class WatchSessionController: NSObject, ObservableObject {
     private var pendingClickAt: Date?
 
     var controlTargets: [WristControlTarget] {
-        directBridge.isReady ? directBridge.controlTargets : companionControlTargets
+        directBridge.isControlReady ? directBridge.controlTargets : companionControlTargets
     }
     var selectedControlTarget: WristControlTarget? { controlTargets.first { $0.id == selectedControlTargetID } }
     var canSendControl: Bool {
         selectedControlTarget != nil && !isVoiceActive && !isVoiceStartPending
-            && (directBridge.isReady || (phoneIsReachable && hasFreshStatus && remoteStatus.isMacConnected))
+            && (directBridge.isControlReady || (phoneIsReachable && hasFreshStatus && remoteStatus.isMacConnected))
     }
 
     func selectControlTarget(_ id: String) {
@@ -246,7 +246,7 @@ final class WatchSessionController: NSObject, ObservableObject {
 
     func sendControl(_ action: WristControlCommand.Action, x: Double = 0, y: Double = 0) {
         guard canSendControl, selectedControlTarget?.actions.contains(action) == true else { return }
-        if !WristControlFlightPolicy.mayStart(action: action, direct: directBridge.isReady,
+        if !WristControlFlightPolicy.mayStart(action: action, direct: directBridge.isControlReady,
                                                inFlight: inFlightControlCount, clickWaiting: pendingClickAt != nil) {
             if action == .pointer && pendingClickAt == nil { pendingPointer.add(x: x, y: y) }
             if action == .click { pendingClickAt = Date() }
@@ -263,7 +263,7 @@ final class WatchSessionController: NSObject, ObservableObject {
             defer {
                 inFlightControlCount -= 1
                 if canSendControl {
-                    let limit = directBridge.isReady ? 1 : 3
+                    let limit = directBridge.isControlReady ? 1 : 3
                     if pendingClickAt == nil, inFlightControlCount < limit,
                        let (x, y) = pendingPointer.take() {
                         sendControl(.pointer, x: x, y: y)
@@ -281,7 +281,7 @@ final class WatchSessionController: NSObject, ObservableObject {
             }
             let receipt: WristControlReceipt
             do {
-                if directBridge.isReady { receipt = try await directBridge.sendControl(command) }
+                if directBridge.isControlReady { receipt = try await directBridge.sendControl(command) }
                 else { receipt = try await sendCompanionControl(command) }
             } catch {
                 #if DEBUG
@@ -924,7 +924,7 @@ final class WatchSessionController: NSObject, ObservableObject {
     }
 
     var remoteConnectionPathText: String {
-        if directBridge.isReady { return "直连 Mac" }
+        if directBridge.isControlReady { return "直连 Mac" }
         if localIsReady { return "经 iPhone" }
         if internetIsReady { return "公网 Relay" }
         return "离线"
@@ -3236,9 +3236,13 @@ final class WatchSessionController: NSObject, ObservableObject {
                 if pollsInternet { requestInternetStatus() }
             }
             guard awaitingVoiceOutcomeSessionID == sessionID else { return }
+            let expiredIntent = awaitingVoiceOutcomeIntent
             awaitingVoiceOutcomeSessionID = nil
             awaitingVoiceOutcomeIdentity = nil
             awaitingVoiceOutcomeConversationTarget = nil
+            if let expiredIntent, [.foregroundDictation, .recording, .wirelessMicrophone, .codexNativeDictation].contains(expiredIntent) {
+                audioModeOutcome = "结果未确认，请在 Mac 检查；不会自动重发"
+            }
             codexVoiceStatusText = "发送结果未确认；为避免重复，不会自动重发，请查看所选会话"
             WatchHaptics.play(.failure)
         }

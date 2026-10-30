@@ -31,7 +31,8 @@ final class WristReadingController: ObservableObject {
         guard !cleanTitle.isEmpty, cleanTitle.count <= 80, text.utf8.count <= 200_000 else {
             detail = "标题限 80 字，正文限 200 KB"; return
         }
-        let paragraphs = text.components(separatedBy: "\n\n").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        let normalizedText = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        let paragraphs = normalizedText.components(separatedBy: "\n\n").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         guard !paragraphs.isEmpty, paragraphs.count <= 1_000 else { detail = "请输入 1 至 1000 段文字"; return }
         pages = paragraphs
         let state = WristReadingSessionState(id: UUID(), title: cleanTitle, page: 0, pageCount: pages.count, isPlaying: false, speed: 1)
