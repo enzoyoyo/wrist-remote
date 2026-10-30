@@ -18,6 +18,12 @@ final class ListenFailureTests: XCTestCase {
         XCTAssertTrue(watch.contains("60929"), watch)
     }
 
+    func testHookPortDoesNotPromiseAutomaticRetry() {
+        let message = ListenFailure.describe(NWError.posix(.EADDRINUSE), port: CodexHookReceiver.port)
+        XCTAssertTrue(message.contains("重新启动"), message)
+        XCTAssertFalse(message.contains("自动重试"), message)
+    }
+
     func testOtherErrorsKeepTheirOwnDescription() {
         let error = NWError.posix(.EPERM)
         XCTAssertEqual(ListenFailure.describe(error, port: 60_927), error.localizedDescription)
