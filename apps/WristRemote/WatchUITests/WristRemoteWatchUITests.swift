@@ -15,12 +15,21 @@ final class WristRemoteWatchUITests: XCTestCase {
         }
         app = XCUIApplication()
         app.launch()
+        openCodexFromControlCenter()
         // A harmless title-area interaction gives XCTest a chance to handle
         // the first-launch notification alert without activating a control.
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
     }
 
-    func testCodexHomeIsFirstAndAllRemotePagesRemainReachable() throws {
+    private func openCodexFromControlCenter() {
+        let more = app.buttons["control-more"]
+        guard more.waitForExistence(timeout: 10) else { return }
+        more.tap()
+        let codex = app.buttons["Codex"]
+        if codex.waitForExistence(timeout: 5) { codex.tap() }
+    }
+
+    func testCodexAndAllRemotePagesRemainReachable() throws {
         XCTAssertTrue(app.staticTexts["Codex"].waitForExistence(timeout: 15), "Codex 首屏没有出现")
         XCTAssertTrue(app.buttons.matching(identifier: "remote-deck-entry").firstMatch.waitForExistence(timeout: 5), "首屏缺少遥控器入口")
 
@@ -134,6 +143,7 @@ final class WristRemoteWatchUITests: XCTestCase {
         app.terminate()
         app.launchArguments = ["--presentation-fixture", "--voice-failure-fixture"]
         app.launch()
+        openCodexFromControlCenter()
         let status = app.buttons.matching(identifier: "codex-voice-status-entry").firstMatch
         for _ in 0..<4 where !status.isHittable { app.swipeUp() }
         XCTAssertTrue(status.isHittable)
@@ -165,6 +175,7 @@ final class WristRemoteWatchUITests: XCTestCase {
         app.terminate()
         app.launchArguments = ["--presentation-fixture"]
         app.launch()
+        openCodexFromControlCenter()
         let destination = app.buttons.matching(identifier: "codex-destination-entry").firstMatch
         XCTAssertTrue(destination.waitForExistence(timeout: 15))
         destination.tap()
@@ -213,6 +224,7 @@ final class WristRemoteWatchUITests: XCTestCase {
         app.launchArguments = ["--presentation-fixture"]
         if largeType { app.launchArguments.append("--large-type-fixture") }
         app.launch()
+        openCodexFromControlCenter()
         XCTAssertTrue(app.staticTexts["Codex"].waitForExistence(timeout: 15))
         let voice = app.buttons.matching(identifier: "codex-voice-control").firstMatch
         XCTAssertTrue(voice.waitForExistence(timeout: 5))
@@ -268,6 +280,7 @@ final class WristRemoteWatchUITests: XCTestCase {
         app.terminate()
         app.launchArguments = ["--presentation-fixture", "--large-type-fixture"]
         app.launch()
+        openCodexFromControlCenter()
         let destination = app.buttons.matching(identifier: "codex-destination-entry").firstMatch
         XCTAssertTrue(destination.waitForExistence(timeout: 15))
         destination.tap()

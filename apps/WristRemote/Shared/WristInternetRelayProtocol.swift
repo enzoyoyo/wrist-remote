@@ -419,7 +419,7 @@ struct WristInternetRelayOperation: Codable, Equatable, Sendable {
         switch voiceIntent {
         case .foregroundDictation: return codexTaskIdentity == nil
         case .codexTask: return codexTaskIdentity != nil
-        case .codexConversation:
+        case .codexConversation, .recording, .wirelessMicrophone, .codexNativeDictation:
             // Conversation targets are short-lived Mac capabilities and are
             // intentionally supported only by the mutually authenticated
             // iPhone-to-Mac private route. The optional public relay must not

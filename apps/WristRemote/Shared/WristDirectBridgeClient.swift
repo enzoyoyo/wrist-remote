@@ -68,6 +68,8 @@ final class WristDirectBridgeClient {
     private var requestInFlight = false
     private var sendWaiters: [CheckedContinuation<Void, Never>] = []
     private var pendingProfile: WatchActionProfileWire?
+    private(set) var controlTargets: [WristControlTarget] = []
+    private var supportsControlCenter = false
     private var macName = "Mac"
     private var applicationTitles: [String: String] = [:]
 
@@ -157,6 +159,27 @@ final class WristDirectBridgeClient {
         }
     }
 
+    func sendControl(_ command: WristControlCommand) async throws -> WristControlReceipt {
+        guard isReady, supportsControlCenter else { throw WristDirectBridgeClientError.notReady }
+        guard sendWaiters.count < 2 else { throw WristDirectBridgeClientError.busy }
+        let expectedGeneration = generation
+        await acquireSendSlot()
+        defer { releaseSendSlot() }
+        try checkGeneration(expectedGeneration)
+        guard isReady, command.isValid(now: Self.nowMilliseconds) else { throw WristDirectBridgeClientError.expired }
+        do {
+            let replies = try await exchangeSecure(.init(type: "control", controlCommand: command), generation: expectedGeneration)
+            guard let receipt = replies.first(where: { $0.type == "controlResult" && $0.controlReceipt?.id == command.id })?.controlReceipt else {
+                throw WristDirectBridgeClientError.operationUnconfirmed
+            }
+            return receipt
+        } catch {
+            // Do not reuse an ambiguous secure sequence or replay on another route.
+            if expectedGeneration == generation { restart() }
+            throw error
+        }
+    }
+
     private func restart() {
         generation &+= 1
         loopTask?.cancel()
@@ -167,6 +190,8 @@ final class WristDirectBridgeClient {
         sessionID = nil
         sessionKey = nil
         sessionAuthenticated = false
+        supportsControlCenter = false
+        controlTargets = []
         secureChannel.reset()
         pendingProfile = nil
         applicationTitles = [:]
@@ -361,6 +386,7 @@ final class WristDirectBridgeClient {
             if clear.type == "denied" {
                 throw WristDirectBridgeClientError.denied(clear.detail ?? "Mac 拒绝了手表连接")
             }
+            if let targets = clear.controlTargets { controlTargets = targets }
             if clear.type == "ready" {
                 guard clear.protocolID == WristBridgeWireMessage.protocolID,
                       clear.serverRole == WristBridgeWireMessage.serverRole,
@@ -383,6 +409,8 @@ final class WristDirectBridgeClient {
                     }
                     pendingProfile = profile
                 }
+                supportsControlCenter = clear.capabilities?.contains(WristBridgeWireMessage.controlCenterCapability) == true
+                controlTargets = clear.controlTargets ?? []
                 macName = clear.deviceName ?? configuration?.serverName ?? "Mac"
                 applicationTitles = clear.watchApplicationTitles ?? [:]
             }

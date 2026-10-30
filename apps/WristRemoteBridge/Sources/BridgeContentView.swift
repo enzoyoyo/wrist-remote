@@ -2,7 +2,7 @@ import ServiceManagement
 import Speech
 import SwiftUI
 
-struct BridgeContentView: View {
+struct BridgeConnectionSettingsView: View {
     @ObservedObject var model: BridgeAppModel
     @State private var pairingSheet: BridgePairingDevice?
 
@@ -26,7 +26,7 @@ struct BridgeContentView: View {
                         clients: model.connectedClients.filter { $0.transport == "HTTP" },
                         device: .watch
                     )
-                    Text("12 个按键，支持单击、双击、长按。映射在 iPhone 中设置；Watch 直连提供按键遥控，语音仍需 iPhone 中转。")
+                    Text("12 个按键，支持单击、双击、长按。映射在 iPhone 中设置；触控与媒体支持 Watch 直连，语音经 iPhone 中转。")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -165,6 +165,7 @@ struct BridgeContentView: View {
                 }
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
         }
         .frame(minWidth: 620, minHeight: 560)
         .sheet(item: $pairingSheet) { device in

@@ -15,8 +15,8 @@ settings:
     SWIFT_VERSION: "5.0"
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: $(WRISTREMOTE_DEVELOPMENT_TEAM)
-    CURRENT_PROJECT_VERSION: 17
-    MARKETING_VERSION: 0.6.0
+    CURRENT_PROJECT_VERSION: 22
+    MARKETING_VERSION: 0.7.0
     ENABLE_USER_SCRIPT_SANDBOXING: YES
 
 targets:
@@ -43,6 +43,13 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.utilities
         UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         CFBundleURLTypes:
           - CFBundleURLName: dev.wristremote.pairing
             CFBundleURLSchemes:
@@ -57,7 +64,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: $(WRISTREMOTE_IOS_BUNDLE_IDENTIFIER)
         PRODUCT_NAME: WristRemote
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        TARGETED_DEVICE_FAMILY: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
         SKIP_INSTALL: NO
         SUPPORTS_MACCATALYST: NO
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
@@ -126,6 +133,19 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: $(WRISTREMOTE_IOS_BUNDLE_IDENTIFIER).tests
         GENERATE_INFOPLIST_FILE: YES
 
+  WristRemoteUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: iOSUITests
+    dependencies:
+      - target: WristRemote
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(WRISTREMOTE_IOS_BUNDLE_IDENTIFIER).uitests
+        GENERATE_INFOPLIST_FILE: YES
+
   WristRemoteWatchUITests:
     type: bundle.ui-testing
     platform: watchOS
@@ -161,3 +181,11 @@ schemes:
     test:
       targets:
         - WristRemoteWatchUITests
+
+  WristReadingUI:
+    build:
+      targets:
+        WristRemote: all
+    test:
+      targets:
+        - WristRemoteUITests

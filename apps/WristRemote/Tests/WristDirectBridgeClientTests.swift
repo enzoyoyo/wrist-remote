@@ -220,6 +220,46 @@ final class WristDirectBridgeClientTests: XCTestCase {
         XCTAssertEqual(server.buttonCount, 1, "Foreground recovery must not replay either old gesture")
     }
 
+    func testControlCommandsUseEncryptedTransportAndExactReceipts() async throws {
+        let server = DirectBridgeTestServer()
+        let client = server.makeClient()
+        client.configure(server.configuration); client.setSceneActive(true)
+        defer { client.setSceneActive(false) }
+        await waitUntil { client.isReady }
+        let command = WristControlCommand(action: .pointer, x: 12, y: -8)
+        let receipt = try await client.sendControl(command)
+        XCTAssertTrue(receipt.accepted); XCTAssertEqual(receipt.id, command.id)
+        XCTAssertEqual(server.lastControl, command)
+        XCTAssertEqual(client.controlTargets.map(\.id), ["mac"])
+    }
+
+    func testLostControlReceiptNeverReplaysAfterReconnect() async throws {
+        let server = DirectBridgeTestServer()
+        let client = server.makeClient()
+        client.configure(server.configuration); client.setSceneActive(true)
+        defer { client.setSceneActive(false) }
+        await waitUntil { client.isReady }
+        server.loseControlReceipt = true
+        do { _ = try await client.sendControl(.init(action: .click)); XCTFail("Lost receipt must fail") } catch {}
+        server.loseControlReceipt = false
+        await waitUntil { client.isReady }
+        XCTAssertEqual(server.controlCount, 1)
+    }
+
+    func testUnsupportedOrExpiredControlsNeverReachHTTP() async throws {
+        let server = DirectBridgeTestServer(); server.advertiseControls = false
+        let client = server.makeClient()
+        client.configure(server.configuration); client.setSceneActive(true)
+        defer { client.setSceneActive(false) }
+        await waitUntil { client.isReady }
+        do { _ = try await client.sendControl(.init(action: .click)); XCTFail("Old bridge must refuse") } catch {}
+        XCTAssertEqual(server.controlCount, 0)
+        server.advertiseControls = true; client.reconnect()
+        await waitUntil { client.isReady }
+        do { _ = try await client.sendControl(.init(action: .click, issuedAt: 1)); XCTFail("Expired action must fail") } catch {}
+        XCTAssertEqual(server.controlCount, 0)
+    }
+
     private func waitUntil(_ condition: () -> Bool) async {
         for _ in 0..<100 where !condition() {
             try? await Task.sleep(for: .milliseconds(2))
@@ -252,9 +292,13 @@ private final class DirectBridgeTestServer {
     var holdButtonReceipt = false
     var heldButtonReceipt: CheckedContinuation<Void, Never>?
     var hasProfile = true
+    var advertiseControls = true
+    var loseControlReceipt = false
+    var controlCount = 0
+    var lastControl: WristControlCommand?
 
     var configuration: WristDirectBridgeConfiguration {
-        .init(endpoint: "http://192.168.1.9:60929/v1/bridge",
+        .init(endpoint: "http://192.168.50.100:60929/v1/bridge",
               serverIdentityPublicKey: identity.publicKey.rawRepresentation.base64EncodedString(),
               serverName: "Test Mac")
     }
@@ -332,10 +376,17 @@ private final class DirectBridgeTestServer {
                     WristDirectBridgeProtocol.buttonTriggerCapability,
                     WristBridgeWireMessage.watchActionProfileCapability,
                     WristBridgeWireMessage.secureSequenceCapability]
+                if advertiseControls { response.capabilities?.append(WristBridgeWireMessage.controlCenterCapability) }
+                response.controlTargets = [.init(id: "mac", name: "Test Mac", kind: .mac, detail: "Fixture", actions: [.pointer, .click])]
             case "watchProfileUpdate":
                 XCTAssertEqual(try WatchActionProfileWire.decodeBase64(XCTUnwrap(message.watchProfile)), profile)
                 response = WristBridgeWireMessage(type: "watchProfileReady")
                 response.profileRevision = wrongProfileAcknowledgement ? profileRevision + 1 : profileRevision
+            case "control":
+                let command = try XCTUnwrap(message.controlCommand)
+                controlCount += 1; lastControl = command
+                if loseControlReceipt { throw URLError(.networkConnectionLost) }
+                response = .init(type: "controlResult", controlReceipt: .init(id: command.id, accepted: true, detail: "Fixture accepted"))
             case "buttonTrigger":
                 buttonCount += 1
                 lastButton = message

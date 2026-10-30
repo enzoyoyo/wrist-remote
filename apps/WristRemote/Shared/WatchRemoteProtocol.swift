@@ -77,6 +77,8 @@ enum WatchRemoteProtocol {
     }
 
     enum Kind: String {
+        case controlCenter
+        case controlTargetList
         case buttonEvent
         case voiceStart
         case voiceStop
@@ -879,7 +881,7 @@ enum WatchRemoteProtocol {
         conversationTarget: WatchCodexConversationTarget?
     ) -> Bool {
         switch intent {
-        case .foregroundDictation:
+        case .foregroundDictation, .recording, .wirelessMicrophone, .codexNativeDictation:
             return identity == nil && conversationTarget == nil
         case .codexTask:
             return identity != nil && conversationTarget == nil

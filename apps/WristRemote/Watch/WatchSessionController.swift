@@ -204,6 +204,134 @@ final class WatchSessionController: NSObject, ObservableObject {
             : "布局预览 · 不连接设备"
     }
     #endif
+    @Published var selectedControlTargetID = "mac"
+    @Published private(set) var companionControlTargets: [WristControlTarget] = []
+    @Published private(set) var controlOutcome: String?
+    @Published private(set) var controlFailed = false
+    private var inFlightControlCount = 0
+    private var controlGeneration = 0
+    private var pendingPointer = WristPointerBuffer()
+    private var pendingClickAt: Date?
+
+    var controlTargets: [WristControlTarget] {
+        directBridge.isReady ? directBridge.controlTargets : companionControlTargets
+    }
+    var selectedControlTarget: WristControlTarget? { controlTargets.first { $0.id == selectedControlTargetID } }
+    var canSendControl: Bool {
+        selectedControlTarget != nil && !isVoiceActive && !isVoiceStartPending
+            && (directBridge.isReady || (phoneIsReachable && hasFreshStatus && remoteStatus.isMacConnected))
+    }
+
+    func selectControlTarget(_ id: String) {
+        guard !isVoiceActive, !isVoiceStartPending else { return }
+        controlGeneration += 1
+        pendingPointer.clear()
+        pendingClickAt = nil
+        selectedControlTargetID = id
+        controlOutcome = nil
+        controlFailed = false
+    }
+
+    func refreshControlTargets() {
+        guard phoneIsReachable, session.isReachable else { return }
+        session.sendMessage([
+            WatchRemoteProtocol.Key.protocolVersion.rawValue: WatchRemoteProtocol.version,
+            WatchRemoteProtocol.Key.kind.rawValue: WatchRemoteProtocol.Kind.controlTargetList.rawValue
+        ], replyHandler: { [weak self] reply in
+            guard let data = reply["targets"] as? Data,
+                  let targets = try? JSONDecoder().decode([WristControlTarget].self, from: data) else { return }
+            Task { @MainActor in self?.companionControlTargets = targets }
+        }, errorHandler: { _ in })
+    }
+
+    func sendControl(_ action: WristControlCommand.Action, x: Double = 0, y: Double = 0) {
+        guard canSendControl, selectedControlTarget?.actions.contains(action) == true else { return }
+        if !WristControlFlightPolicy.mayStart(action: action, direct: directBridge.isReady,
+                                               inFlight: inFlightControlCount, clickWaiting: pendingClickAt != nil) {
+            if action == .pointer && pendingClickAt == nil { pendingPointer.add(x: x, y: y) }
+            if action == .click { pendingClickAt = Date() }
+            return
+        }
+        let command = WristControlCommand(targetID: selectedControlTargetID, action: action, x: x, y: y)
+        let generation = controlGeneration
+        #if DEBUG
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        let latencyDiagnostic = ProcessInfo.processInfo.arguments.contains("--wrist-latency-diagnostic")
+        #endif
+        inFlightControlCount += 1
+        Task { @MainActor in
+            defer {
+                inFlightControlCount -= 1
+                if canSendControl {
+                    let limit = directBridge.isReady ? 1 : 3
+                    if pendingClickAt == nil, inFlightControlCount < limit,
+                       let (x, y) = pendingPointer.take() {
+                        sendControl(.pointer, x: x, y: y)
+                    } else if inFlightControlCount == 0, let (x, y) = pendingPointer.take() {
+                        let clickAt = pendingClickAt
+                        pendingClickAt = nil
+                        sendControl(.pointer, x: x, y: y)
+                        pendingClickAt = clickAt
+                    } else if inFlightControlCount == 0, let clickAt = pendingClickAt {
+                        pendingClickAt = nil
+                        let age = Date().timeIntervalSince(clickAt)
+                        if age >= 0, age <= 0.3 { sendControl(.click) }
+                    }
+                } else { pendingPointer.clear(); pendingClickAt = nil }
+            }
+            let receipt: WristControlReceipt
+            do {
+                if directBridge.isReady { receipt = try await directBridge.sendControl(command) }
+                else { receipt = try await sendCompanionControl(command) }
+            } catch {
+                #if DEBUG
+                if action == .pointer && latencyDiagnostic { print("WRIST_POINTER error") }
+                #endif
+                pendingPointer.clear()
+                pendingClickAt = nil
+                if generation == controlGeneration {
+                    controlGeneration += 1
+                    controlOutcome = "连接中断或未确认；不会重发"
+                    controlFailed = true
+                    WatchHaptics.play(.failure)
+                }
+                return
+            }
+            guard generation == controlGeneration else { return }
+            #if DEBUG
+            if action == .pointer && latencyDiagnostic {
+                let elapsed = Int((ProcessInfo.processInfo.systemUptime - startedAt) * 1000)
+                print("WRIST_POINTER rtt_ms=\(elapsed) accepted=\(receipt.accepted)")
+            }
+            #endif
+            if action != .pointer || !receipt.accepted || controlFailed {
+                controlOutcome = receipt.detail
+                controlFailed = !receipt.accepted
+            }
+            if !receipt.accepted { pendingPointer.clear(); pendingClickAt = nil }
+            if action != .pointer && action != .scroll { WatchHaptics.play(receipt.accepted ? .click : .failure) }
+        }
+    }
+
+    private func sendCompanionControl(_ command: WristControlCommand) async throws -> WristControlReceipt {
+        guard session.isReachable else { throw WristDirectBridgeClientError.notReady }
+        let data = try JSONEncoder().encode(command)
+        return try await withCheckedThrowingContinuation { continuation in
+            session.sendMessage([
+                WatchRemoteProtocol.Key.protocolVersion.rawValue: WatchRemoteProtocol.version,
+                WatchRemoteProtocol.Key.kind.rawValue: WatchRemoteProtocol.Kind.controlCenter.rawValue,
+                "control": data
+            ], replyHandler: { reply in
+                guard let data = reply["receipt"] as? Data,
+                      let receipt = try? JSONDecoder().decode(WristControlReceipt.self, from: data),
+                      receipt.id == command.id else {
+                    continuation.resume(throwing: WristDirectBridgeClientError.operationUnconfirmed); return
+                }
+                continuation.resume(returning: receipt)
+            }, errorHandler: { continuation.resume(throwing: $0) })
+        }
+    }
+
     private static let favoritesDefaultsKey = "WristRemote.favoriteCommands"
     private static let notifiedCodexTurnsKey = "WristRemote.notifiedCodexTurns"
     private static let persistedCodexDraftKey = "WristRemote.persistedCodexDraft"
@@ -266,6 +394,8 @@ final class WatchSessionController: NSObject, ObservableObject {
     private var voiceFinalAckTimeoutTask: Task<Void, Never>?
     private var voiceOutcomeTimeoutTask: Task<Void, Never>?
     private var voiceIntent: WatchVoiceIntent = .foregroundDictation
+    private var awaitingVoiceOutcomeIntent: WatchVoiceIntent?
+    private var isIndependentAudioMode: Bool { voiceIntent == .recording || voiceIntent == .wirelessMicrophone || voiceIntent == .codexNativeDictation }
     private var voiceCodexTaskIdentity: WatchCodexTaskIdentity?
     private var voiceCodexConversationTarget: WatchCodexConversationTarget?
     private var awaitingVoiceOutcomeSessionID: String? {
@@ -556,7 +686,7 @@ final class WatchSessionController: NSObject, ObservableObject {
         codexConversationTarget: WatchCodexConversationTarget?
     ) -> Bool {
         switch intent {
-        case .foregroundDictation:
+        case .foregroundDictation, .recording, .wirelessMicrophone, .codexNativeDictation:
             return codexTaskIdentity == nil && codexConversationTarget == nil
         case .codexTask:
             guard let codexTaskIdentity else { return false }
@@ -702,6 +832,10 @@ final class WatchSessionController: NSObject, ObservableObject {
     }
 
     func sceneDidBecomeInactive() {
+        controlGeneration += 1
+        pendingPointer.clear()
+        pendingClickAt = nil
+        companionControlTargets = []
         guard !Self.presentationFixtureRequested else { return }
         isSceneActive = false
         cancelDirectButtonGestures()
@@ -1337,6 +1471,35 @@ final class WatchSessionController: NSObject, ObservableObject {
         setButton(command, isPressed: false)
     }
 
+    @Published private(set) var audioModeOutcome: String?
+    var canStartPrivateAudio: Bool { selectedControlTargetID == "mac" && localIsReady && canStartVoice }
+    var isAudioModePreparing: Bool { voiceGestureIsHeld && !isVoiceActive || isVoiceStartPending }
+    var isAudioModeFinishing: Bool {
+        isVoiceFinalizing || (!isVoiceActive && !isVoiceStartPending && awaitingVoiceOutcomeSessionID != nil)
+    }
+    var privateAudioStatusText: String? {
+        if isAudioModePreparing { return "正在准备麦克风，请等待开始震动" }
+        if isVoiceActive { return "正在采音，再点一次停止" }
+        if isVoiceFinalizing { return "正在传送尾音，请保持手表亮屏" }
+        if awaitingVoiceOutcomeSessionID != nil { return "正在等待 Mac 确认结果" }
+        if let audioModeOutcome { return audioModeOutcome }
+        if let issueText { return issueText }
+        if selectedControlTargetID != "mac" { return "请先选择 Mac" }
+        if !localIsReady { return "语音需要 iPhone 中继，请打开手机端" }
+        if effectiveRemoteStatus.voiceOwner != .none { return "麦克风正在使用，请稍后重试" }
+        return nil
+    }
+    func setAudioModePressed(_ pressed: Bool, intent: WatchVoiceIntent) {
+        guard [.foregroundDictation, .recording, .wirelessMicrophone, .codexNativeDictation].contains(intent) else { return }
+        if pressed {
+            audioModeOutcome = nil
+            guard localIsReady, selectedControlTargetID == "mac" else {
+                audioModeOutcome = "请连接 iPhone 与 Mac 私有通道"; return
+            }
+        }
+        setVoicePressed(pressed, intent: intent, codexTaskIdentity: nil, codexConversationTarget: nil)
+    }
+
     func setVoicePressed(_ isPressed: Bool) {
         setVoicePressed(
             isPressed,
@@ -1692,6 +1855,7 @@ final class WatchSessionController: NSObject, ObservableObject {
     /// Once the stop has left Watch, keep waiting for its receipt: local UI
     /// cancellation cannot retract a request that Codex may already accept.
     private func abortCodexCapture(failureText: String? = nil) {
+        if isIndependentAudioMode { audioModeOutcome = failureText ?? "本次录音已中断，未保存" }
         guard voiceGestureIsHeld || isVoiceStartPending || isVoiceActive || isVoiceFinalizing else {
             if awaitingVoiceOutcomeSessionID != nil {
                 codexVoiceStatusText = "已交给 Mac，正在确认发送结果"
@@ -2122,7 +2286,7 @@ final class WatchSessionController: NSObject, ObservableObject {
     }
 
     private func requestVoiceStart(requestID: UInt64) {
-        let usesInternet = voiceIntent == .codexConversation
+        let usesInternet = voiceIntent == .codexConversation || isIndependentAudioMode
             ? false
             : (!localIsReady && internetIsReady)
         let selectedStatus = usesInternet ? internetRemoteStatus : remoteStatus
@@ -2510,7 +2674,7 @@ final class WatchSessionController: NSObject, ObservableObject {
                 }
             }
             isVoiceActive = true
-            if expectedIntent == .codexTask || expectedIntent == .codexConversation {
+            if expectedIntent != .foregroundDictation {
                 codexVoiceStatusText = "正在录音…"
                 scheduleCodexVoiceDurationLimit(
                     streamID: streamID,
@@ -2525,6 +2689,7 @@ final class WatchSessionController: NSObject, ObservableObject {
                 endVoice(sendStopMessage: canSendVoiceStopForCurrentPath)
                 return
             }
+            awaitingVoiceOutcomeIntent = expectedIntent
             awaitingVoiceOutcomeSessionID = streamID.uuidString
             awaitingVoiceOutcomeUsesInternet = voiceUsesInternet
             awaitingVoiceOutcomeIdentity = expectedCodexTaskIdentity
@@ -2850,6 +3015,9 @@ final class WatchSessionController: NSObject, ObservableObject {
     }
 
     private func endVoice(sendStopMessage: Bool, submittingCodexCapture: Bool = false) {
+        if isIndependentAudioMode, !sendStopMessage || issueText != nil {
+            abortCodexCapture(failureText: issueText); return
+        }
         if voiceIntent == .codexTask || voiceIntent == .codexConversation,
            !submittingCodexCapture || !sendStopMessage {
             abortCodexCapture(failureText: issueText)
@@ -2919,7 +3087,7 @@ final class WatchSessionController: NSObject, ObservableObject {
         sendStopMessage: Bool,
         failureText: String?
     ) {
-        if voiceIntent == .codexTask || voiceIntent == .codexConversation,
+        if voiceIntent == .codexTask || voiceIntent == .codexConversation || isIndependentAudioMode,
            failureText != nil || !sendStopMessage {
             abortCodexCapture(failureText: failureText)
             return
@@ -2980,7 +3148,7 @@ final class WatchSessionController: NSObject, ObservableObject {
         sendReleaseMessages: Bool,
         preservingInternetButtons: Bool = false
     ) {
-        if isCodexVoiceCaptureInProgress { abortCodexCapture() }
+        if isCodexVoiceCaptureInProgress || isIndependentAudioMode { abortCodexCapture() }
         let hadLocalVoiceInteraction = voiceGestureIsHeld
             || isVoiceActive
             || isVoiceFinalizing
@@ -3362,7 +3530,9 @@ final class WatchSessionController: NSObject, ObservableObject {
     ) {
         voiceDurationLimitTask?.cancel()
         voiceDurationLimitTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(120))
+            let isPrivateAudio = intent == .recording || intent == .wirelessMicrophone || intent == .codexNativeDictation
+            // Leave room for in-flight packets before the Mac's hard sample cap.
+            try? await Task.sleep(for: .seconds(isPrivateAudio ? 115 : 120))
             guard let self,
                   !Task.isCancelled,
                   self.voiceStreamID == streamID,
@@ -3370,6 +3540,11 @@ final class WatchSessionController: NSObject, ObservableObject {
                   self.isVoiceActive
             else { return }
             self.voiceDurationLimitTask = nil
+            if isPrivateAudio {
+                self.voiceGestureIsHeld = false
+                self.endVoice(sendStopMessage: self.canSendVoiceStopForCurrentPath)
+                return
+            }
             self.abortCodexCapture(failureText: "录音超过两分钟，已停止并丢弃；请分段重录")
         }
     }
@@ -3511,12 +3686,12 @@ final class WatchSessionController: NSObject, ObservableObject {
     }
 
     private func applyVoiceOutcome(_ outcome: WatchVoiceOutcome) {
-        guard outcome.sessionID == awaitingVoiceOutcomeSessionID else { return }
+        guard outcome.sessionID == awaitingVoiceOutcomeSessionID, outcome.intent == awaitingVoiceOutcomeIntent else { return }
         let expectedIdentity = awaitingVoiceOutcomeIdentity
         let expectedConversationTarget = awaitingVoiceOutcomeConversationTarget
         let matchesExpectedTarget: Bool
         switch outcome.intent {
-        case .foregroundDictation:
+        case .foregroundDictation, .recording, .wirelessMicrophone, .codexNativeDictation:
             matchesExpectedTarget = expectedIdentity == nil
                 && expectedConversationTarget == nil
                 && !outcome.hasCodexTaskIdentityFields
@@ -3599,7 +3774,7 @@ final class WatchSessionController: NSObject, ObservableObject {
                 }
                 codexConversationDraft = draft
                 selectedCodexTarget = draft.target
-            case .foregroundDictation:
+            case .foregroundDictation, .recording, .wirelessMicrophone, .codexNativeDictation:
                 codexVoiceStatusText = "识别结果类型无效，已拒绝"
                 WatchHaptics.play(.failure)
                 return
@@ -3613,7 +3788,10 @@ final class WatchSessionController: NSObject, ObservableObject {
                 codexVoiceStatusText = outcome.detail ?? "已排入 Codex 任务，等待处理"
             case .codexConversation:
                 codexVoiceStatusText = outcome.detail ?? "已排入所选任务，等待处理"
+            case .recording, .wirelessMicrophone, .codexNativeDictation:
+                audioModeOutcome = outcome.detail
             case .foregroundDictation:
+                audioModeOutcome = "文字已输入 Mac"
                 codexVoiceStatusText = "已输入 · \(outcome.localeIdentifier)"
             }
             WatchHaptics.play(.success)
@@ -3621,6 +3799,7 @@ final class WatchSessionController: NSObject, ObservableObject {
             let detail = outcome.detail ?? "语音没有发送到 Codex"
             codexVoiceStatusText = detail
             issueText = detail
+            audioModeOutcome = detail
             WatchHaptics.play(.failure)
         }
     }
