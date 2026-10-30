@@ -41,12 +41,13 @@ print -- "Active Simulator SDKs: iOS $IOS_SIMULATOR_SDK; watchOS $WATCH_SIMULATO
 select_simulator() {
   local platform="$1"
   local maximum_sdk_version="$2"
-  python3 - "$platform" "$maximum_sdk_version" "$DEVICES_JSON" <<'PY'
+  local device_prefix="${3:-}"
+  python3 - "$platform" "$maximum_sdk_version" "$DEVICES_JSON" "$device_prefix" <<'PY'
 import json
 import re
 import sys
 
-platform, maximum_sdk_text, source = sys.argv[1:]
+platform, maximum_sdk_text, source, device_prefix = sys.argv[1:]
 with open(source, encoding="utf-8") as handle:
     payload = json.load(handle)
 
@@ -57,7 +58,7 @@ def version_tuple(value):
     return tuple((parts + [0, 0, 0, 0])[:4])
 
 marker = f".SimRuntime.{platform}-"
-required_name_prefix = "iPhone" if platform == "iOS" else "Apple Watch"
+required_name_prefix = device_prefix or ("iPhone" if platform == "iOS" else "Apple Watch")
 maximum_sdk = version_tuple(maximum_sdk_text)
 candidates = []
 for runtime, devices in payload.get("devices", {}).items():
@@ -125,7 +126,8 @@ xcodebuild \
   -destination "platform=watchOS Simulator,id=$WATCH_UDID" \
   -derivedDataPath "$TEMP_ROOT/WatchDerivedData" \
   -parallel-testing-enabled NO \
-  -only-testing:WristRemoteWatchUITests/WristRemoteWatchUITests/testCodexHomeIsFirstAndAllRemotePagesRemainReachable \
+  -only-testing:WristRemoteWatchUITests/WatchControlCenterUITests \
+  -only-testing:WristRemoteWatchUITests/WristRemoteWatchUITests/testCodexAndAllRemotePagesRemainReachable \
   -only-testing:WristRemoteWatchUITests/WristRemoteWatchUITests/testCodexConversationDestinationIsExplicitlySelectable \
   -only-testing:WristRemoteWatchUITests/WristRemoteWatchUITests/testConversationPickerAlwaysHasAnAppOwnedEscapePath \
   -only-testing:WristRemoteWatchUITests/WristRemoteWatchUITests/testExplicitPagePickerNeverStartsFromARemoteButton \
@@ -136,4 +138,18 @@ xcodebuild \
   CODE_SIGNING_REQUIRED=NO \
   test
 
-print -- "Simulator unit and offline UI-smoke tests passed."
+ipad_selection="$(select_simulator iOS "$IOS_SIMULATOR_SDK" iPad)"
+readonly IPAD_UDID="${ipad_selection%%|*}"
+print -- "iPad reading UI destination: ${ipad_selection#*|}"
+xcodebuild \
+  -project "$PROJECT" \
+  -scheme WristReadingUI \
+  -configuration Debug \
+  -destination "platform=iOS Simulator,id=$IPAD_UDID" \
+  -derivedDataPath "$TEMP_ROOT/iPadDerivedData" \
+  -parallel-testing-enabled NO \
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_REQUIRED=NO \
+  test
+
+print -- "Simulator unit, Watch control-center and iPad reading UI tests passed."

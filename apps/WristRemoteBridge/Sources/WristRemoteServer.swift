@@ -440,6 +440,7 @@ final class WristRemoteServer {
     typealias IdentityLoader = () -> P256.Signing.PrivateKey?
 
     private let queue = DispatchQueue(label: "WristRemoteBridge.server", qos: .userInitiated)
+    private let logger = AppLog.logger("server")
     private let identityQueue = DispatchQueue(
         label: "WristRemoteBridge.server-identity",
         qos: .userInitiated
@@ -488,6 +489,8 @@ final class WristRemoteServer {
         @escaping (WatchProfileRuntimeInstallResult) -> Void
     ) -> Void)?
     var onWatchButtonEvent: ((WristRemoteButton, WristRemoteButtonPhase, @escaping (Bool) -> Void) -> Void)?
+    var onControlCommand: ((WristControlCommand, @escaping (WristControlReceipt) -> Void) -> Void)?
+    var controlTargetsProvider: (() -> [WristControlTarget])?
     var onWatchButtonTrigger: ((WristRemoteButton, WristRemoteTrigger, Int, Int64, @escaping (Bool) -> Void) -> Void)?
     var onWatchButtonCancel: ((WristRemoteButton) -> Void)?
     var onProfileReset: (() -> Void)?
@@ -746,10 +749,12 @@ final class WristRemoteServer {
                 guard let self, listener === self.listener else { return }
                 switch state {
                 case .ready:
+                    self.logger.notice("LAN listener ready on port \(Self.port, privacy: .public)")
                     self.publishConnectionStatus()
                 case let .failed(error):
                     self.listener = nil
-                    self.publish(.failed(error.localizedDescription))
+                    self.logger.error("LAN listener failed on port \(Self.port, privacy: .public): \(String(describing: error), privacy: .public)")
+                    self.publish(.failed(ListenFailure.describe(error, port: Self.port)))
                 case .cancelled:
                     if self.listener != nil { self.publish(.stopped) }
                 default:
@@ -762,7 +767,8 @@ final class WristRemoteServer {
             self.listener = listener
             listener.start(queue: queue)
         } catch {
-            publish(.failed(error.localizedDescription))
+            logger.error("LAN listener could not be created: \(String(describing: error), privacy: .public)")
+            publish(.failed(ListenFailure.describe(error, port: Self.port)))
         }
     }
 
@@ -973,6 +979,7 @@ final class WristRemoteServer {
             guard let self, let client else { return }
             guard WristRemoteClientAdmissionPolicy.mayPresentApproval(hasPendingApproval: pendingApprovalID != nil),
                   let approval = onApprovalRequested else {
+                logger.notice("client refused: another approval is pending")
                 client.resolveApproval(false)
                 return
             }
@@ -1026,6 +1033,23 @@ final class WristRemoteServer {
                 queue.asyncAfter(deadline: .now() + 0.75, execute: item)
             }
             handler(button, phase, completion)
+        }
+        client.controlTargetsProvider = { [weak self] in
+            guard let self else { return [] }
+            return (self.controlTargetsProvider?() ?? []) + self.clients.values.compactMap { $0.activeReadingTarget }
+        }
+        client.onControlCommand = { [weak self] command, completion in
+            if command.targetID.hasPrefix("reading-") {
+                guard let receiver = self?.clients.values.first(where: { $0.activeReadingTarget?.id == command.targetID }) else {
+                    completion(.init(id: command.id, accepted: false, detail: "阅读会话已结束或断线")); return
+                }
+                receiver.sendReadingControl(command, completion: completion)
+                return
+            }
+            guard let handler = self?.onControlCommand else {
+                completion(.init(id: command.id, accepted: false, detail: "控制中心未就绪")); return
+            }
+            handler(command, completion)
         }
         client.onWatchButtonTrigger = { [weak self] button, trigger, revision, issuedAt, completion in
             guard let handler = self?.onWatchButtonTrigger else { completion(false); return }
@@ -1178,6 +1202,7 @@ final class WristRemoteServerClient {
 
     private let transport: WristRemoteSessionTransport
     let sessionIdentifier = UUID().uuidString
+    private let logger = AppLog.logger("server")
     private let queue: DispatchQueue
     private let serverIdentityPrivateKey: P256.Signing.PrivateKey // gitleaks:allow
     private let handshakeTimeoutSeconds: TimeInterval
@@ -1228,6 +1253,8 @@ final class WristRemoteServerClient {
         @escaping (WatchProfileRuntimeInstallResult) -> Void
     ) -> Void)?
     var onWatchButtonEvent: ((WristRemoteButton, WristRemoteButtonPhase, @escaping (Bool) -> Void) -> Void)?
+    var onControlCommand: ((WristControlCommand, @escaping (WristControlReceipt) -> Void) -> Void)?
+    var controlTargetsProvider: (() -> [WristControlTarget])?
     var onWatchButtonTrigger: ((WristRemoteButton, WristRemoteTrigger, Int, Int64, @escaping (Bool) -> Void) -> Void)?
     var onVoiceStart: ((
         String?,
@@ -1472,7 +1499,7 @@ final class WristRemoteServerClient {
 
         let normalized: WatchVoiceOutcome
         switch expected.intent {
-        case .foregroundDictation:
+        case .foregroundDictation, .recording, .wirelessMicrophone, .codexNativeDictation:
             guard outcome.threadID == nil,
                   outcome.turnID == nil,
                   outcome.taskRevision == nil
@@ -1675,6 +1702,7 @@ final class WristRemoteServerClient {
               ), identityKey.isValidSignature(signature, for: proof),
               sessionKey != nil
         else {
+            logger.notice("client authentication rejected (direct HTTP: \(self.isDirectHTTP, privacy: .public))")
             cancel()
             return
         }
@@ -1700,15 +1728,18 @@ final class WristRemoteServerClient {
         pendingName = nil
         pendingPairingCode = nil
         guard let identityFingerprint, canApproveIdentity?(identityFingerprint) == true else {
+            logger.notice("client refused: approved device limit (direct HTTP: \(self.isDirectHTTP, privacy: .public))")
             resolveApproval(false)
             return
         }
         if clientHadPinnedServerIdentity,
            isIdentityTrusted?(identityFingerprint) == true {
+            logger.notice("trusted client ready (direct HTTP: \(self.isDirectHTTP, privacy: .public))")
             approved = true
             sendReady()
             return
         }
+        logger.notice("client approval requested (direct HTTP: \(self.isDirectHTTP, privacy: .public), pinned: \(self.clientHadPinnedServerIdentity, privacy: .public))")
         onApprovalRequested?(name, pairingCode, identityFingerprint)
     }
 
@@ -1722,6 +1753,7 @@ final class WristRemoteServerClient {
             BridgeWireMessage.secureSequenceCapability,
             WristDirectBridgeProtocol.capability,
             WristDirectBridgeProtocol.buttonTriggerCapability,
+            BridgeWireMessage.controlCenterCapability,
         ] + (isDirectHTTP ? [] : [
             BridgeWireMessage.voiceSessionsCapability,
             BridgeWireMessage.codexTasksCapability,
@@ -1749,7 +1781,8 @@ final class WristRemoteServerClient {
             internetRelayProvisioning: internetRelayProvisioning,
             internetRelayProvisioningCleared: internetRelayProvisioning == nil,
             directBridgeConfiguration: directBridgeConfiguration.flatMap { try? $0.encodeBase64() },
-            directBridgeConfigurationCleared: directBridgeConfiguration == nil
+            directBridgeConfigurationCleared: directBridgeConfiguration == nil,
+            controlTargets: controlTargetsProvider?() ?? []
         )) { [weak self] in
             guard let self else { return }
             onApproved?(connectedDeviceName)
@@ -1757,7 +1790,7 @@ final class WristRemoteServerClient {
     }
 
     private func handleSecure(_ message: BridgeWireMessage) {
-        if isDirectHTTP && !["livenessProbe", "watchProfileUpdate", "buttonTrigger"].contains(message.type) {
+        if isDirectHTTP && !["livenessProbe", "watchProfileUpdate", "buttonTrigger", "control", "controlTargets"].contains(message.type) {
             sendOperationError("Watch 私网直连目前仅支持状态和按钮遥控；语音请使用手机中继。")
             return
         }
@@ -1769,10 +1802,30 @@ final class WristRemoteServerClient {
             guard BridgeWireMessage.isValidProbeID(message.probeID),
                   let probeID = message.probeID
             else { return }
-            sendSecure(BridgeWireMessage(type: "livenessAck", probeID: probeID))
+            sendSecure(BridgeWireMessage(type: "livenessAck", probeID: probeID, controlTargets: controlTargetsProvider?() ?? []))
 
         case "watchProfileUpdate":
             handleWatchProfileUpdate(message)
+
+        case "readingSession":
+            if message.readingSessionCleared == true, message.readingSession == nil {
+                readingSession = nil
+            } else if message.readingSessionCleared == false, let state = message.readingSession, state.isValid {
+                readingSession = state
+                readingHeartbeat = Date()
+            }
+
+        case "readingControlResult":
+            if let receipt = message.controlReceipt,
+               let pending = readingCompletions.removeValue(forKey: receipt.id) {
+                pending(receipt)
+            }
+
+        case "controlTargets":
+            sendSecure(BridgeWireMessage(type: "controlTargets", controlTargets: controlTargetsProvider?() ?? []))
+
+        case "control":
+            handleControl(message)
 
         case "buttonTrigger":
             handleButtonTrigger(message)
@@ -2106,6 +2159,45 @@ final class WristRemoteServerClient {
         }
     }
 
+    private var readingSession: WristReadingSessionState?
+    private var readingHeartbeat = Date.distantPast
+    private var readingCompletions: [UUID: (WristControlReceipt) -> Void] = [:]
+    var activeReadingTarget: WristControlTarget? {
+        guard approved, !closed, Date().timeIntervalSince(readingHeartbeat) < 5,
+              let readingSession, readingSession.isValid else { return nil }
+        return readingSession.target
+    }
+
+    func sendReadingControl(_ command: WristControlCommand, completion: @escaping (WristControlReceipt) -> Void) {
+        guard activeReadingTarget?.id == command.targetID, readingCompletions.count < 4,
+              readingCompletions[command.id] == nil else {
+            completion(.init(id: command.id, accepted: false, detail: "阅读会话暂不可用")); return
+        }
+        readingCompletions[command.id] = completion
+        sendSecure(.init(type: "readingControl", controlCommand: command))
+        queue.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.readingCompletions.removeValue(forKey: command.id)?(.init(id: command.id, accepted: false, detail: "阅读设备未确认，不会重发"))
+        }
+    }
+
+    private var controlReplayGate = WristControlReplayGate()
+
+    private func handleControl(_ message: BridgeWireMessage) {
+        guard let command = message.controlCommand else { return }
+        guard controlReplayGate.accept(command, now: Int64(Date().timeIntervalSince1970 * 1_000)),
+              let handler = onControlCommand else {
+            sendSecure(BridgeWireMessage(type: "controlResult", requestID: command.id.uuidString, controlReceipt:
+                .init(id: command.id, accepted: false, detail: "操作已过期或已处理，不会重放")))
+            return
+        }
+        handler(command) { [weak self] receipt in
+            self?.queue.async {
+                guard let self, !self.closed else { return }
+                self.sendSecure(BridgeWireMessage(type: "controlResult", requestID: command.id.uuidString, controlReceipt: receipt))
+            }
+        }
+    }
+
     private func handleButtonTrigger(_ message: BridgeWireMessage) {
         guard let requestID = message.requestID,
               WristDirectBridgeProtocol.isCanonicalSessionID(requestID)
@@ -2223,7 +2315,7 @@ final class WristRemoteServerClient {
 
     private func acceptsVoiceTarget(_ target: VoiceTarget) -> Bool {
         switch target.intent {
-        case .foregroundDictation:
+        case .foregroundDictation, .recording, .wirelessMicrophone, .codexNativeDictation:
             return target.codexTaskIdentity == nil
                 && target.codexConversationTarget == nil
         case .codexTask:
@@ -2253,7 +2345,7 @@ final class WristRemoteServerClient {
         let identity = wireCodexTaskIdentity(from: message)
         let conversationTarget = message.codexConversationTarget
         switch intent {
-        case .foregroundDictation:
+        case .foregroundDictation, .recording, .wirelessMicrophone, .codexNativeDictation:
             guard message.threadID == nil,
                   message.turnID == nil,
                   message.taskRevision == nil,
@@ -2302,6 +2394,10 @@ final class WristRemoteServerClient {
     private func close() {
         guard !closed else { return }
         closed = true
+        readingSession = nil
+        let pendingReading = readingCompletions
+        readingCompletions.removeAll()
+        for (id, reply) in pendingReading { reply(.init(id: id, accepted: false, detail: "阅读设备已断线")) }
         handshakeTimeoutWorkItem?.cancel()
         handshakeTimeoutWorkItem = nil
         if voiceSession.stop(sessionID: nil, force: true) { onVoiceCancel?(activeVoiceSessionID) }

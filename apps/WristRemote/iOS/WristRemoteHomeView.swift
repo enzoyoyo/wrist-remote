@@ -63,6 +63,12 @@ struct WristRemoteHomeView: View {
             }
 
             Section {
+                NavigationLink { WristReadingView(connection: connection) } label: {
+                    Label("提词与阅读会话", systemImage: "text.book.closed").frame(minHeight: 44)
+                }
+            }
+
+            Section {
                 NavigationLink {
                     WatchCustomizationView(settings: settings, profileStore: profileStore,
                                            connection: connection, relay: relay)

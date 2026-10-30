@@ -206,6 +206,8 @@ final class WristDirectHTTPSessionTransport: WristRemoteSessionTransport {
             case "watchProfileUpdate":
                 return ["watchProfileReady", "watchProfileRejected"].contains(response.type)
                     && response.profileRevision == input.profileRevision
+            case "controlTargets": return response.type == "controlTargets"
+            case "control": return response.type == "controlResult" && response.requestID == input.controlCommand?.id.uuidString
             case "buttonTrigger":
                 return response.type == "buttonTriggerResult" && response.requestID == input.requestID
             default: return false
@@ -267,6 +269,7 @@ final class WristDirectHTTPSessionTransport: WristRemoteSessionTransport {
 
 final class WristDirectBridgeHTTPServer {
     private let queue: DispatchQueue
+    private let logger = AppLog.logger("watch-direct")
     private var listener: NWListener?
     private var requests: [ObjectIdentifier: WristDirectHTTPConnection] = [:]
     private var sessions: [String: WristDirectHTTPSessionTransport] = [:]
@@ -285,8 +288,11 @@ final class WristDirectBridgeHTTPServer {
         listener.stateUpdateHandler = { [weak self, weak listener] state in
             guard let self, self.listener === listener else { return }
             switch state {
-            case .ready: onReady?()
-            case .failed:
+            case .ready:
+                self.logger.notice("watch direct listener ready on \(String(describing: endpoint), privacy: .public)")
+                onReady?()
+            case let .failed(error):
+                self.logger.error("watch direct listener failed: \(String(describing: error), privacy: .public)")
                 stop()
                 onFailure?()
             default: break
@@ -309,7 +315,9 @@ final class WristDirectBridgeHTTPServer {
     }
 
     private func accept(_ connection: NWConnection) {
+        // Outcome categories only: no bodies, keys or identities are logged.
         guard requests.count < 16, WristRemotePeerAccessPolicy.permits(connection.endpoint) else {
+            logger.notice("watch direct connection refused: \(self.requests.count < 16 ? "peer outside local network" : "too many requests", privacy: .public)")
             connection.cancel(); return
         }
         let client = WristDirectHTTPConnection(connection: connection, queue: queue)
@@ -320,17 +328,25 @@ final class WristDirectBridgeHTTPServer {
             guard let self, let client else { return }
             let session: WristDirectHTTPSessionTransport
             if let sessionID = request.sessionID {
-                guard let existing = sessions[sessionID] else { client.send(status: 410); return }
+                guard let existing = sessions[sessionID] else {
+                    logger.notice("watch direct request for expired session")
+                    client.send(status: 410); return
+                }
                 session = existing
             } else {
-                guard sessions.count < 12 else { client.send(status: 503); return }
+                guard sessions.count < 12 else {
+                    logger.notice("watch direct session refused: session limit")
+                    client.send(status: 503); return
+                }
                 session = WristDirectHTTPSessionTransport(queue: queue)
                 sessions[session.id] = session
                 let sessionID = session.id
                 session.onFinished = { [weak self] in self?.sessions.removeValue(forKey: sessionID) }
                 guard onSession?(session) == true else {
+                    logger.notice("watch direct session refused by bridge")
                     session.cancel(); client.send(status: 503); return
                 }
+                logger.notice("watch direct session opened")
             }
             client.onAbandoned = { [weak session] in session?.cancel() }
             session.exchange(request.message) { [weak client] result in
@@ -341,7 +357,9 @@ final class WristDirectBridgeHTTPServer {
                         client.send(status: 500); return
                     }
                     client.send(status: 200, body: data)
-                case let .failure(error): client.send(status: error.statusCode)
+                case let .failure(error):
+                    self.logger.notice("watch direct exchange failed with status \(error.statusCode, privacy: .public)")
+                    client.send(status: error.statusCode)
                 }
             }
         }

@@ -27,6 +27,7 @@ struct WristBridgeWireMessage: Codable, Equatable {
     static let connectionLivenessCapability = "connectionLivenessV1"
     static let secureSequenceCapability = "secureSequenceV1"
     static let audioDeliveryReceiptsCapability = "audioDeliveryReceiptsV1"
+    static let controlCenterCapability = "controlCenterV1"
     static let appleWatchInputSource = "appleWatch"
 
     // Transitional aliases keep the sidecar source concise while both targets
@@ -90,6 +91,11 @@ struct WristBridgeWireMessage: Codable, Equatable {
     var directBridgeConfigurationCleared: Bool?
     var buttonTrigger: String?
     var issuedAtEpochMilliseconds: Int64?
+    var controlCommand: WristControlCommand?
+    var controlReceipt: WristControlReceipt?
+    var controlTargets: [WristControlTarget]?
+    var readingSession: WristReadingSessionState?
+    var readingSessionCleared: Bool?
 
     static func isValidProbeID(_ value: String?) -> Bool {
         guard let value, let parsed = UUID(uuidString: value) else { return false }
@@ -454,6 +460,9 @@ struct WatchCodexTaskSnapshot: Codable, Equatable, Sendable {
 
 enum WatchVoiceIntent: String, Codable, Equatable, Sendable {
     case foregroundDictation
+    case recording
+    case wirelessMicrophone
+    case codexNativeDictation
     case codexTask
     case codexConversation
 }
@@ -600,7 +609,7 @@ struct WatchVoiceOutcome: Codable, Equatable, Sendable {
               text.map(WatchCodexConversationWireValidation.isValidTranscript) ?? true
         else { return false }
         switch intent {
-        case .foregroundDictation:
+        case .foregroundDictation, .recording, .wirelessMicrophone, .codexNativeDictation:
             return !hasCodexTaskIdentityFields && !hasCodexConversationDraftFields
         case .codexTask:
             return codexTaskIdentity != nil && !hasCodexConversationDraftFields

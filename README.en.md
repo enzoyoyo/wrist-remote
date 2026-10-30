@@ -6,6 +6,9 @@ Wrist Remote is a privacy-first iPhone and Apple Watch remote-control system for
 
 ## Features
 
+- Watch control center with a touchpad, scrolling, media and volume controls, and presentation actions; target and connection status remain visible.
+- Separate audio modes for dictation, local AAC recording, and virtual microphone output. The first-party Codex live-dictation experiment is unfinished and disabled. See the [control center guide](docs/en/control-center.md).
+- Android / Google TV fixed-key controls and an in-app iPhone/iPad reading session with page navigation, speed control, and mirrored text.
 - A 12-button iPhone remote panel sharing all 36 gesture mappings with Apple Watch, plus Mac pairing QR codes and independent phone/Watch connection status.
 - Foreground Apple Watch button control directly over LAN with a separate device identity. Phone and Watch may connect together; authenticated action receipts distinguish confirmed execution from unconfirmed requests, which are never replayed after reconnect.
 - 12 virtual buttons, each with independent single-click, double-click, and long-press actions: 36 mapping slots in total.

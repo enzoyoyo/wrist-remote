@@ -2,7 +2,10 @@ import SwiftUI
 import WatchKit
 
 extension Color {
-    static let wristRemoteAccent = Color.cyan
+    static let wristRemoteAccent = Color(red: 0.89, green: 0.73, blue: 0.43)
+    static let wristRemoteBackground = Color(red: 0.035, green: 0.055, blue: 0.09)
+    static let wristRemoteSurface = Color(red: 0.075, green: 0.105, blue: 0.155)
+    static let wristRemoteMuted = Color(red: 0.66, green: 0.70, blue: 0.77)
 }
 
 struct WatchRemoteRootView: View {
@@ -10,8 +13,7 @@ struct WatchRemoteRootView: View {
 
     var body: some View {
         NavigationStack {
-            WatchCodexConversationHomeView(controller: controller)
-                .navigationTitle("Codex")
+            WatchControlCenterView(controller: controller)
                 .navigationBarTitleDisplayMode(.inline)
         }
         .background(Color.black.ignoresSafeArea())

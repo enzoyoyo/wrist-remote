@@ -9,7 +9,7 @@ struct WristRemoteIOSApp: App {
     private static var isUIPreview: Bool {
         #if DEBUG
         ProcessInfo.processInfo.arguments.contains("--wristremote-ui-preview")
-            || isRemoteUIPreview
+            || isRemoteUIPreview || isReadingUIPreview
         #else
         false
         #endif
@@ -18,6 +18,14 @@ struct WristRemoteIOSApp: App {
     private static var isRemoteUIPreview: Bool {
         #if DEBUG
         ProcessInfo.processInfo.arguments.contains("--wristremote-ui-preview-remote")
+        #else
+        false
+        #endif
+    }
+
+    private static var isReadingUIPreview: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--reading-session-preview")
         #else
         false
         #endif
@@ -49,7 +57,9 @@ struct WristRemoteIOSApp: App {
     var body: some Scene {
         WindowGroup {
             NavigationStack {
-                if Self.isRemoteUIPreview {
+                if Self.isReadingUIPreview {
+                    Self.readingPreview
+                } else if Self.isRemoteUIPreview {
                     WristPhoneRemoteView(connection: connection, profileStore: actionProfileStore)
                 } else {
                     WristRemoteHomeView(
@@ -73,6 +83,14 @@ struct WristRemoteIOSApp: App {
                 navigationResetID = UUID()
             }
         }
+    }
+
+    private static var readingPreview: some View {
+        let reader = WristReadingController(dependencies: .init(isConnected: { true }, publish: { _ in }, setReceiver: { _ in }))
+        reader.title = "演示提词"
+        reader.text = "看向镜头，放慢语速。\n\n转动表冠调整节奏，轻点右箭头切换下一段。\n\n这一页在 iPad 上显示，手表只负责控制。"
+        reader.start()
+        return WristReadingView(reader: reader)
     }
 
     private func applyScenePhase(_ phase: ScenePhase) {
