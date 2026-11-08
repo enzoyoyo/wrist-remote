@@ -9,8 +9,9 @@ readonly APP_DIR="$REPO_ROOT/apps/WristRemote"
 readonly PROJECT="$APP_DIR/WristRemote.xcodeproj"
 readonly TEMP_ROOT="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/WristRemoteSimulatorTests.XXXXXX")"
 readonly DEVICES_JSON="$TEMP_ROOT/devices.json"
-readonly RESULT_ROOT="${WRISTREMOTE_TEST_RESULTS_DIR:-$TEMP_ROOT/results}"
-/bin/mkdir -p "$RESULT_ROOT"
+readonly RESULT_BASE="${WRISTREMOTE_TEST_RESULTS_DIR:-$TEMP_ROOT/results}"
+/bin/mkdir -p "$RESULT_BASE"
+readonly RESULT_ROOT="$(/usr/bin/mktemp -d "$RESULT_BASE/run.XXXXXX")"
 
 cleanup() {
   local allowed_prefix="${TMPDIR:-/tmp}/WristRemoteSimulatorTests."

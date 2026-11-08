@@ -126,7 +126,7 @@ final class WatchControlCenterUITests: XCTestCase {
         capture("more-actions")
         codex.tap()
         XCTAssertTrue(app.buttons.matching(identifier: "codex-destination-entry").firstMatch.waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons.matching(identifier: "remote-deck-entry").firstMatch.exists)
+        XCTAssertTrue(app.buttons.matching(identifier: "remote-deck-entry").firstMatch.waitForExistence(timeout: 5))
         capture("codex-from-control-center")
     }
 }

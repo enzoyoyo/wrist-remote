@@ -46,7 +46,11 @@ jobs:
           mkdir -p "$bin_dir"
           tar -xzf "$archive" -C "$bin_dir" gitleaks
           chmod 0755 "$bin_dir/gitleaks"
-          "$bin_dir/gitleaks" version
+          actual_version="$("$bin_dir/gitleaks" version)"
+          if [[ "$actual_version" != "$GITLEAKS_VERSION" ]]; then
+            echo "Gitleaks version does not match the configured pin" >&2
+            exit 1
+          fi
           echo "$bin_dir" >> "$GITHUB_PATH"
       - name: Run fail-closed publication scan
         run: make security
@@ -101,13 +105,13 @@ jobs:
         env:
           WRISTREMOTE_TEST_RESULTS_DIR: ${{ runner.temp }}/wrist-remote-test-results
         run: make test-simulators
-      - name: Preserve simulator results and screenshots
-        if: always()
+      - name: Preserve failed simulator diagnostics
+        if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: simulator-results-${{ github.run_attempt }}
           path: ${{ runner.temp }}/wrist-remote-test-results
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 1
       - name: Build Apple targets without signing
         run: make build
