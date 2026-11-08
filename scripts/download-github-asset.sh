@@ -34,11 +34,17 @@ curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
   --output "$temporary_file" \
   "https://api.github.com/repos/${repository}/releases/assets/${asset_id}"
 
-if command -v sha256sum >/dev/null 2>&1; then
-  printf '%s  %s\n' "$expected_sha256" "$temporary_file" | sha256sum -c
-else
-  printf '%s  %s\n' "$expected_sha256" "$temporary_file" | shasum -a 256 -c
-fi
+python3 - "$expected_sha256" "$temporary_file" <<'PY'
+import hashlib
+import sys
+
+digest = hashlib.sha256()
+with open(sys.argv[2], "rb") as asset:
+    for chunk in iter(lambda: asset.read(1024 * 1024), b""):
+        digest.update(chunk)
+if digest.hexdigest() != sys.argv[1]:
+    raise SystemExit("GitHub release asset SHA-256 mismatch")
+PY
 
 mv -f -- "$temporary_file" "$output_file"
 echo "Verified official GitHub release asset: $repository/$asset_id"
