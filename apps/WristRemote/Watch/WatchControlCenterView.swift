@@ -88,9 +88,7 @@ struct WatchControlCenterView: View {
                 .accessibilityLabel("控制模式：\(mode.rawValue)")
                 .accessibilityIdentifier("control-mode-picker")
                 .disabled(controller.isVoiceActive || controller.isVoiceStartPending)
-                NavigationLink {
-                    morePage
-                } label: {
+                NavigationLink(value: WatchControlDestination.more) {
                     HStack(spacing: 4) {
                         Image(systemName: controller.controlFailed ? "exclamationmark.circle" : "ellipsis")
                         if !typeSize.isAccessibilitySize { Text("更多") }
@@ -145,7 +143,10 @@ struct WatchControlCenterView: View {
                 try? await Task.sleep(for: .seconds(3))
             }
         }
-        .onDisappear { dragTranslation = .zero }
+        .onDisappear {
+            crownFocused = false
+            dragTranslation = .zero
+        }
         .sheet(isPresented: $showingModes) { modePicker }
         .sheet(isPresented: $showingDevices) { devicePicker }
     }
@@ -396,12 +397,4 @@ struct WatchControlCenterView: View {
         .task { controller.refreshControlTargets() }
     }
 
-    private var morePage: some View {
-        List {
-            if let outcome = controller.controlOutcome { Text(outcome).font(.caption) }
-            NavigationLink("自定义遥控") { RemoteDeckView(controller: controller) }
-            NavigationLink("Codex") { WatchCodexConversationHomeView(controller: controller).navigationTitle("Codex") }
-            NavigationLink("连接设置") { WatchDirectConnectionView(controller: controller) }
-        }.navigationTitle("更多")
-    }
 }

@@ -94,7 +94,17 @@ jobs:
         run: cp Config/Local.xcconfig.example Config/Local.xcconfig
       - name: Run all test suites
         run: make test
-      - name: Run iOS unit and offline watchOS UI-smoke tests
+      - name: Run iOS unit, watchOS and iPad UI tests
+        env:
+          WRISTREMOTE_TEST_RESULTS_DIR: ${{ runner.temp }}/wrist-remote-test-results
         run: make test-simulators
+      - name: Preserve simulator results and screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: simulator-results-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wrist-remote-test-results
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Build Apple targets without signing
         run: make build

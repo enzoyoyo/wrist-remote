@@ -121,7 +121,12 @@ final class WatchControlCenterUITests: XCTestCase {
     func testMoreRetainsCustomRemoteAndCodex() {
         app.buttons["control-more"].tap()
         XCTAssertTrue(app.buttons["自定义遥控"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Codex"].exists)
+        let codex = app.buttons.matching(identifier: "control-codex-entry").firstMatch
+        XCTAssertTrue(codex.exists)
         capture("more-actions")
+        codex.tap()
+        XCTAssertTrue(app.buttons.matching(identifier: "codex-destination-entry").firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons.matching(identifier: "remote-deck-entry").firstMatch.exists)
+        capture("codex-from-control-center")
     }
 }

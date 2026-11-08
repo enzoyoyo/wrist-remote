@@ -9,6 +9,8 @@ readonly APP_DIR="$REPO_ROOT/apps/WristRemote"
 readonly PROJECT="$APP_DIR/WristRemote.xcodeproj"
 readonly TEMP_ROOT="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/WristRemoteSimulatorTests.XXXXXX")"
 readonly DEVICES_JSON="$TEMP_ROOT/devices.json"
+readonly RESULT_ROOT="${WRISTREMOTE_TEST_RESULTS_DIR:-$TEMP_ROOT/results}"
+/bin/mkdir -p "$RESULT_ROOT"
 
 cleanup() {
   local allowed_prefix="${TMPDIR:-/tmp}/WristRemoteSimulatorTests."
@@ -113,6 +115,7 @@ xcodebuild \
   -configuration Debug \
   -destination "platform=iOS Simulator,id=$IOS_UDID" \
   -derivedDataPath "$TEMP_ROOT/iOSDerivedData" \
+  -resultBundlePath "$RESULT_ROOT/ios-unit.xcresult" \
   -parallel-testing-enabled NO \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGNING_REQUIRED=NO \
@@ -125,6 +128,7 @@ xcodebuild \
   -configuration Debug \
   -destination "platform=watchOS Simulator,id=$WATCH_UDID" \
   -derivedDataPath "$TEMP_ROOT/WatchDerivedData" \
+  -resultBundlePath "$RESULT_ROOT/watch-ui.xcresult" \
   -parallel-testing-enabled NO \
   -only-testing:WristRemoteWatchUITests/WatchControlCenterUITests \
   -only-testing:WristRemoteWatchUITests/WristRemoteWatchUITests/testCodexAndAllRemotePagesRemainReachable \
@@ -147,6 +151,7 @@ xcodebuild \
   -configuration Debug \
   -destination "platform=iOS Simulator,id=$IPAD_UDID" \
   -derivedDataPath "$TEMP_ROOT/iPadDerivedData" \
+  -resultBundlePath "$RESULT_ROOT/ipad-ui.xcresult" \
   -parallel-testing-enabled NO \
   CODE_SIGNING_ALLOWED=NO \
   CODE_SIGNING_REQUIRED=NO \

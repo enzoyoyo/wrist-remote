@@ -19,11 +19,16 @@ final class WristRemoteWatchUITests: XCTestCase {
     }
 
     private func openCodexFromControlCenter() {
-        let more = app.buttons["control-more"]
-        guard more.waitForExistence(timeout: 10) else { return }
+        let more = app.buttons.matching(identifier: "control-more").firstMatch
+        XCTAssertTrue(more.waitForExistence(timeout: 10), "控制中心缺少更多入口")
         more.tap()
-        let codex = app.buttons["Codex"]
-        if codex.waitForExistence(timeout: 5) { codex.tap() }
+        let codex = app.buttons.matching(identifier: "control-codex-entry").firstMatch
+        XCTAssertTrue(codex.waitForExistence(timeout: 5), "更多页缺少 Codex 入口")
+        codex.tap()
+        XCTAssertTrue(
+            app.buttons.matching(identifier: "codex-destination-entry").firstMatch.waitForExistence(timeout: 10),
+            "进入 Codex 后会话入口没有出现"
+        )
     }
 
     func testCodexAndAllRemotePagesRemainReachable() throws {
