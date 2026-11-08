@@ -27,15 +27,8 @@ runs:
         readonly expected_sha256=4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
         readonly archive="$RUNNER_TEMP/xcodegen.zip"
         readonly install_root="$RUNNER_TEMP/xcodegen-release"
-        # Pin the official release asset as well as its checksum. The browser
-        # download route can return a gateway error while the API asset works.
-        curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
-          --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 120 \
-          --header "Authorization: Bearer $GITHUB_DOWNLOAD_TOKEN" \
-          --header 'Accept: application/octet-stream' \
-          --output "$archive" \
-          "https://api.github.com/repos/yonaskolb/XcodeGen/releases/assets/478866069"
-        printf '%s  %s\n' "$expected_sha256" "$archive" | shasum -a 256 --check
+        bash "$GITHUB_WORKSPACE/scripts/download-github-asset.sh" \
+          yonaskolb/XcodeGen 478866069 "$expected_sha256" "$archive"
         mkdir -p "$install_root"
         unzip -q "$archive" -d "$install_root"
         chmod 0755 "$install_root/xcodegen/bin/xcodegen"
@@ -67,13 +60,8 @@ runs:
         esac
         readonly archive="$RUNNER_TEMP/ripgrep.tar.gz"
         readonly install_root="$RUNNER_TEMP/ripgrep-release"
-        curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
-          --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 120 \
-          --header "Authorization: Bearer $GITHUB_DOWNLOAD_TOKEN" \
-          --header 'Accept: application/octet-stream' \
-          --output "$archive" \
-          "https://api.github.com/repos/BurntSushi/ripgrep/releases/assets/${asset_id}"
-        printf '%s  %s\n' "$expected_sha256" "$archive" | shasum -a 256 --check
+        bash "$GITHUB_WORKSPACE/scripts/download-github-asset.sh" \
+          BurntSushi/ripgrep "$asset_id" "$expected_sha256" "$archive"
         mkdir -p "$install_root"
         tar -xzf "$archive" -C "$install_root"
         readonly bin_dir="$install_root/ripgrep-${version}-${target}"

@@ -39,13 +39,8 @@ jobs:
           set -euo pipefail
           archive="$RUNNER_TEMP/gitleaks.tar.gz"
           bin_dir="$RUNNER_TEMP/gitleaks-bin"
-          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
-            --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 120 \
-            --header "Authorization: Bearer $GITHUB_DOWNLOAD_TOKEN" \
-            --header 'Accept: application/octet-stream' \
-            --output "$archive" \
-            "https://api.github.com/repos/gitleaks/gitleaks/releases/assets/${GITLEAKS_LINUX_X64_ASSET_ID}"
-          printf '%s  %s\n' "$GITLEAKS_LINUX_X64_SHA256" "$archive" | sha256sum --check --strict
+          bash scripts/download-github-asset.sh gitleaks/gitleaks \
+            "$GITLEAKS_LINUX_X64_ASSET_ID" "$GITLEAKS_LINUX_X64_SHA256" "$archive"
           mkdir -p "$bin_dir"
           tar -xzf "$archive" -C "$bin_dir" gitleaks
           chmod 0755 "$bin_dir/gitleaks"
