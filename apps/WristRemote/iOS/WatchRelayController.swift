@@ -639,6 +639,8 @@ final class WatchRelayController: NSObject, ObservableObject {
         else { return nil }
 
         switch kind {
+        case .controlCenter, .controlTargetList:
+            return false
         case .buttonEvent:
             guard let event = Self.validatedButtonEvent(
                 from: message,
@@ -795,7 +797,7 @@ final class WatchRelayController: NSObject, ObservableObject {
         nowEpochMilliseconds: Int64 = Int64(Date().timeIntervalSince1970 * 1_000)
     ) -> Bool {
         switch intent {
-        case .foregroundDictation:
+        case .foregroundDictation, .recording, .wirelessMicrophone, .codexNativeDictation:
             return codexTaskIdentity == nil && codexConversationTarget == nil
         case .codexTask:
             return codexConversationTarget == nil
@@ -1609,6 +1611,19 @@ extension WatchRelayController: WCSessionDelegate {
             }
             self.updateWatchProperties(from: session)
             switch WatchRemoteProtocol.kind(from: message) {
+            case .controlTargetList:
+                replyHandler(["targets": (try? JSONEncoder().encode(self.connection.controlTargets)) ?? Data()])
+            case .controlCenter:
+                guard let data = message["control"] as? Data,
+                      data.count < 2048,
+                      let command = try? JSONDecoder().decode(WristControlCommand.self, from: data) else {
+                    replyHandler([:]); return
+                }
+                Task { @MainActor in
+                    let receipt = await self.connection.sendControl(command)
+                    replyHandler(["receipt": (try? JSONEncoder().encode(receipt)) ?? Data()])
+                }
+
             case .requestStatus:
                 guard let requestID = WatchRemoteProtocol.requestID(from: message) else {
                     replyHandler(WatchRemoteProtocol.statusMessage(self.currentStatus))

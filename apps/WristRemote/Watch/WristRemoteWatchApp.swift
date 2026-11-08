@@ -15,6 +15,8 @@ struct WristRemoteWatchApp: App {
                        ProcessInfo.processInfo.arguments.contains("--large-type-fixture") {
                         size = .xxxLarge
                     }
+                    if ProcessInfo.processInfo.arguments.contains("--presentation-fixture"),
+                       ProcessInfo.processInfo.arguments.contains("--largest-type-fixture") { size = .accessibility5 }
                 }
                 #endif
                 .preferredColorScheme(.dark)

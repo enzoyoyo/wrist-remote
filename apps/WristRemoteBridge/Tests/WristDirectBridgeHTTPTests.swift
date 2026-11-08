@@ -148,6 +148,28 @@ final class WristDirectBridgeHTTPTests: XCTestCase {
         XCTAssertEqual(voice.last?.type, "error")
     }
 
+    func testEncryptedControlCenterCommitReceiptAndReplayGateEndToEnd() throws {
+        let fixture = HTTPFixture(test: self)
+        defer { fixture.close() }
+        try fixture.handshake()
+        var count = 0
+        fixture.client.onControlCommand = { command, completion in
+            count += 1
+            completion(.init(id: command.id, accepted: true, detail: "Fixture accepted"))
+        }
+        let command = WristControlCommand(action: .scroll, y: -30)
+        let response = try fixture.send(.init(type: "control", controlCommand: command))
+        XCTAssertEqual(response.last?.controlReceipt?.id, command.id)
+        XCTAssertEqual(response.last?.controlReceipt?.accepted, true)
+        XCTAssertEqual(count, 1)
+        XCTAssertEqual(try fixture.send(.init(type: "control", controlCommand: command)).last?.controlReceipt?.accepted, false)
+        XCTAssertEqual(count, 1)
+        let expired = WristControlCommand(action: .click, issuedAt: 1)
+        XCTAssertEqual(try fixture.send(.init(type: "control", controlCommand: expired)).last?.controlReceipt?.accepted, false)
+        XCTAssertEqual(count, 1)
+        XCTAssertEqual(try fixture.send(.init(type: "controlTargets")).last?.type, "controlTargets")
+    }
+
     func testChangedProfileRejectsPreviouslyAcknowledgedButtonRevision() throws {
         let fixture = HTTPFixture(test: self)
         defer { fixture.close() }

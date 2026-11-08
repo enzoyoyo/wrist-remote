@@ -235,7 +235,7 @@ final class WatchActionEngine {
         return true
     }
 
-    private static func postSystemKey(_ type: Int32) -> Bool {
+    static func postSystemKey(_ type: Int32) -> Bool {
         let downData = Int((type << 16) | (0xA << 8))
         let upData = Int((type << 16) | (0xB << 8))
         guard let down = NSEvent.otherEvent(

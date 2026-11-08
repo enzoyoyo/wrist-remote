@@ -20,6 +20,11 @@ concurrency:
 
 env:
   NODE_VERSION: 24.19.0
+  # Official CodeQL 2.27.4 bundles containing each extractor and its query packs.
+  CODEQL_JAVASCRIPT_BUNDLE_ASSET_ID: 692239234
+  CODEQL_JAVASCRIPT_BUNDLE_SHA256: 082e798c97831283a2a5f69e9198c51270e5767013d5333daeeab6520af9ce72
+  CODEQL_SWIFT_BUNDLE_ASSET_ID: 692239631
+  CODEQL_SWIFT_BUNDLE_SHA256: 52e3f0ea756787f0ceb2e5b2553d2560ba1d83573e3f77002f31833b307fbebc
 
 jobs:
   javascript-typescript:
@@ -32,10 +37,18 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Download checksum-pinned JavaScript analysis tools
+        env:
+          GITHUB_DOWNLOAD_TOKEN: ${{ github.token }}
+        run: |
+          bash scripts/download-github-asset.sh github/codeql-action \
+            "$CODEQL_JAVASCRIPT_BUNDLE_ASSET_ID" "$CODEQL_JAVASCRIPT_BUNDLE_SHA256" \
+            "$RUNNER_TEMP/codeql-bundle-javascript-linux64.tar.zst"
       - name: Initialize CodeQL
         uses: github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4
         with:
           languages: javascript-typescript
+          tools: ${{ runner.temp }}/codeql-bundle-javascript-linux64.tar.zst
           build-mode: none
           queries: security-extended
       - name: Analyze JavaScript and TypeScript
@@ -61,10 +74,18 @@ jobs:
         uses: ./.github/actions/setup-apple-tools
       - name: Create non-signing CI configuration
         run: cp Config/Local.xcconfig.example Config/Local.xcconfig
+      - name: Download checksum-pinned Swift analysis tools
+        env:
+          GITHUB_DOWNLOAD_TOKEN: ${{ github.token }}
+        run: |
+          bash scripts/download-github-asset.sh github/codeql-action \
+            "$CODEQL_SWIFT_BUNDLE_ASSET_ID" "$CODEQL_SWIFT_BUNDLE_SHA256" \
+            "$RUNNER_TEMP/codeql-bundle-swift-osx64.tar.zst"
       - name: Initialize CodeQL
         uses: github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4
         with:
           languages: swift
+          tools: ${{ runner.temp }}/codeql-bundle-swift-osx64.tar.zst
           build-mode: manual
           queries: security-extended
       - name: Trace unsigned Apple builds

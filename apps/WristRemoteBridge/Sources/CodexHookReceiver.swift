@@ -18,6 +18,7 @@ final class CodexHookReceiver {
     private let listenPort: UInt16
     private let bearerToken: String?
     private let queue = DispatchQueue(label: "WristRemoteBridge.codex-hook", qos: .utility)
+    private let logger = AppLog.logger("codex-hook")
     private var listener: NWListener?
     private var clients: [ObjectIdentifier: CodexHookHTTPClient] = [:]
 
@@ -45,6 +46,7 @@ final class CodexHookReceiver {
         guard listener == nil else { return }
         publish(.starting)
         guard let bearerToken else {
+            logger.error("codex hook cannot start: no bearer token")
             publish(.failed("Codex hook authentication could not be initialized."))
             return
         }
@@ -68,11 +70,13 @@ final class CodexHookReceiver {
                 guard let self, listener === self.listener else { return }
                 switch state {
                 case .ready:
+                    self.logger.notice("codex hook listener ready on port \(self.listenPort, privacy: .public)")
                     self.publish(.ready)
                 case let .failed(error):
                     self.listener = nil
                     self.closeAllClients()
-                    self.publish(.failed(error.localizedDescription))
+                    self.logger.error("codex hook listener failed on port \(self.listenPort, privacy: .public): \(String(describing: error), privacy: .public)")
+                    self.publish(.failed(ListenFailure.describe(error, port: self.listenPort)))
                 case .cancelled:
                     self.listener = nil
                     self.closeAllClients()
@@ -87,7 +91,8 @@ final class CodexHookReceiver {
             listener.start(queue: queue)
         } catch {
             listener = nil
-            publish(.failed(error.localizedDescription))
+            logger.error("codex hook listener could not be created: \(String(describing: error), privacy: .public)")
+            publish(.failed(ListenFailure.describe(error, port: listenPort)))
         }
     }
 

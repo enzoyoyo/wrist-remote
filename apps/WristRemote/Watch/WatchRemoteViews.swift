@@ -2,7 +2,10 @@ import SwiftUI
 import WatchKit
 
 extension Color {
-    static let wristRemoteAccent = Color.cyan
+    static let wristRemoteAccent = Color(red: 0.89, green: 0.73, blue: 0.43)
+    static let wristRemoteBackground = Color(red: 0.035, green: 0.055, blue: 0.09)
+    static let wristRemoteSurface = Color(red: 0.075, green: 0.105, blue: 0.155)
+    static let wristRemoteMuted = Color(red: 0.66, green: 0.70, blue: 0.77)
 }
 
 struct WatchRemoteRootView: View {
@@ -10,11 +13,44 @@ struct WatchRemoteRootView: View {
 
     var body: some View {
         NavigationStack {
-            WatchCodexConversationHomeView(controller: controller)
-                .navigationTitle("Codex")
+            WatchControlCenterView(controller: controller)
                 .navigationBarTitleDisplayMode(.inline)
+                .navigationDestination(for: WatchControlDestination.self) { [controller] destination in
+                    switch destination {
+                    case .more:
+                        WatchControlMoreView(controller: controller)
+                    case .codex:
+                        WatchCodexConversationHomeView(controller: controller)
+                            .navigationTitle("Codex")
+                    case .remote:
+                        RemoteDeckView(controller: controller)
+                    case .connection:
+                        WatchDirectConnectionView(controller: controller)
+                    }
+                }
         }
         .background(Color.black.ignoresSafeArea())
+    }
+}
+
+/// Keep destinations independent of the control center's focus and layout state.
+/// The root stack owns navigation even while the control center is off screen.
+enum WatchControlDestination: Hashable {
+    case more, codex, remote, connection
+}
+
+struct WatchControlMoreView: View {
+    @ObservedObject var controller: WatchSessionController
+
+    var body: some View {
+        List {
+            if let outcome = controller.controlOutcome { Text(outcome).font(.caption) }
+            NavigationLink("自定义遥控", value: WatchControlDestination.remote)
+            NavigationLink("Codex", value: WatchControlDestination.codex)
+                .accessibilityIdentifier("control-codex-entry")
+            NavigationLink("连接设置", value: WatchControlDestination.connection)
+        }
+        .navigationTitle("更多")
     }
 }
 

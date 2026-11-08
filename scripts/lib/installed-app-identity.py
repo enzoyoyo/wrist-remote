@@ -22,6 +22,23 @@ def matches_identity(apps, bundle_id, team_id):
     )
 
 
+def read_installed_apps(udid, bundle_id):
+    arguments = ["-u", udid, "list", "-b", bundle_id,
+                 "--xml", "-a", "CFBundleIdentifier", "-a", "Entitlements"]
+    try:
+        result = subprocess.run(
+            ["ideviceinstaller", *arguments], capture_output=True, check=True, timeout=30,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        # A device discovered by CoreDevice can be available only over Wi-Fi.
+        # Keep the exact UDID and identity requirements on that transport.
+        result = subprocess.run(
+            ["ideviceinstaller", "--network", *arguments],
+            capture_output=True, check=True, timeout=30,
+        )
+    return plistlib.loads(result.stdout)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--udid", required=True)
@@ -29,12 +46,7 @@ def main():
     parser.add_argument("--team", required=True)
     args = parser.parse_args()
     try:
-        result = subprocess.run(
-            ["ideviceinstaller", "-u", args.udid, "list", "-b", args.bundle,
-             "--xml", "-a", "CFBundleIdentifier", "-a", "Entitlements"],
-            capture_output=True, check=True, timeout=30,
-        )
-        apps = plistlib.loads(result.stdout)
+        apps = read_installed_apps(args.udid, args.bundle)
         valid = matches_identity(apps, args.bundle, args.team)
     except (OSError, subprocess.SubprocessError, plistlib.InvalidFileException, ValueError):
         valid = False

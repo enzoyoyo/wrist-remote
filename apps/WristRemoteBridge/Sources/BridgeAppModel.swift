@@ -57,6 +57,85 @@ final class BridgeAppModel: ObservableObject {
         (WatchCodexConversationCatalog?, String?) -> Void
     ] = []
     private let internetRelay: InternetRelayClient?
+    private let audioDefaults: UserDefaults
+    @Published private(set) var audioOutputDevices: [WristAudioOutputDevice] = []
+    @Published var selectedAudioOutputUID: String {
+        didSet {
+            guard oldValue != selectedAudioOutputUID else { return }
+            audioDefaults.set(selectedAudioOutputUID, forKey: "WristRemote.liveAudioOutputUID")
+            if activeVoiceContext?.intent == .wirelessMicrophone { finishVoiceWithFailure("音频输出已切换，无线麦已停止") }
+            if activeVoiceContext?.intent == .codexNativeDictation && selectedAudioOutputUID == codexAudioOutputUID { finishVoiceWithFailure("音频输出冲突，请检查 Codex 听写状态") }
+        }
+    }
+    // An empty device or key keeps native dictation disabled until explicitly configured.
+    @Published var codexAudioOutputUID: String {
+        didSet {
+            audioDefaults.set(codexAudioOutputUID, forKey: "WristRemote.codexAudioOutputUID")
+            if oldValue != codexAudioOutputUID, activeVoiceContext?.intent == .codexNativeDictation {
+                finishVoiceWithFailure("听写音频设备已变化，请检查 Codex 听写状态")
+            }
+        }
+    }
+    @Published var codexShortcutKey: String {
+        didSet {
+            audioDefaults.set(codexShortcutKey, forKey: "WristRemote.codexShortcutKey")
+            if oldValue != codexShortcutKey, activeVoiceContext?.intent == .codexNativeDictation {
+                finishVoiceWithFailure("快捷键已变化，请检查 Codex 听写状态")
+            }
+        }
+    }
+    @Published var codexShortcutModifiers: String {
+        didSet {
+            audioDefaults.set(codexShortcutModifiers, forKey: "WristRemote.codexShortcutModifiers")
+            if oldValue != codexShortcutModifiers, activeVoiceContext?.intent == .codexNativeDictation {
+                finishVoiceWithFailure("快捷键已变化，请检查 Codex 听写状态")
+            }
+        }
+    }
+    static let codexModifierOptions: [(String, UInt)] = [
+        ("⌃⌥⌘", (1 << 18) | (1 << 19) | (1 << 20)),
+        ("⇧⌥⌘", (1 << 17) | (1 << 19) | (1 << 20)),
+        ("⌃⇧⌘", (1 << 17) | (1 << 18) | (1 << 20)),
+        ("⌃⇧⌥", (1 << 17) | (1 << 18) | (1 << 19)),
+        ("⌃⇧⌥⌘", (1 << 17) | (1 << 18) | (1 << 19) | (1 << 20))
+    ]
+    static let codexShortcutKeys: [(String, UInt16)] = [
+        ("A",0), ("B",11), ("C",8), ("D",2), ("E",14), ("F",3), ("G",5),
+        ("H",4), ("I",34), ("J",38), ("K",40), ("L",37), ("M",46), ("N",45),
+        ("O",31), ("P",35), ("Q",12), ("R",15), ("S",1), ("T",17), ("U",32),
+        ("V",9), ("W",13), ("X",7), ("Y",16), ("Z",6)
+    ]
+    private var nativeShortcut: WatchActionBindingWire? {
+        guard let entry = Self.codexShortcutKeys.first(where: { $0.0 == codexShortcutKey }),
+              let modifiers = Self.codexModifierOptions.first(where: { $0.0 == codexShortcutModifiers }) else { return nil }
+        return .init(action: .customShortcut, shortcut: .init(keyCode: entry.1, modifierFlagsRawValue: modifiers.1, keyLabel: modifiers.0 + entry.0))
+    }
+    private var nativeStartedBinding: WatchActionBindingWire?
+    private var nativeCodexPID: pid_t?
+    private func nativeCodexIsFrontmost() -> Bool {
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              app.bundleIdentifier == "com.openai.codex" else { return false }
+        return nativeCodexPID == nil || nativeCodexPID == app.processIdentifier
+    }
+    private func stopNativeShortcut() -> Bool {
+        defer { nativeStartedBinding = nil; nativeCodexPID = nil }
+        guard let binding = nativeStartedBinding, nativeCodexIsFrontmost() else { return false }
+        return actionEngine.perform(binding)
+    }
+    @Published private(set) var audioModeStatus = "尚未录音"
+    @Published private(set) var lastSavedRecording: URL?
+    private let recordingLibrary = WristRecordingLibrary()
+    private let liveAudioOutput = WristLiveAudioOutput()
+
+    func refreshAudioOutputs() { audioOutputDevices = WristAudioOutputDevice.selectableOutputs() }
+    func showRecordings() {
+        if let lastSavedRecording { NSWorkspace.shared.activateFileViewerSelecting([lastSavedRecording]) }
+        else {
+            try? FileManager.default.createDirectory(at: recordingLibrary.directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            NSWorkspace.shared.open(recordingLibrary.directory)
+        }
+    }
+
     private var hasStarted = false
     private var lastPublishedCodexRevision: Int64?
     private var codexTaskStateRevision: Int
@@ -80,23 +159,31 @@ final class BridgeAppModel: ObservableObject {
         actionEngine: WatchActionEngine? = nil,
         gestureDispatcher: WatchGestureDispatcher? = nil,
         speechTranscriber: WatchSpeechTranscriber? = nil,
-        codexAudioInbox: WatchCodexAudioInbox? = nil
+        codexAudioInbox: WatchCodexAudioInbox? = nil,
+        isPresentationPreview: Bool = false,
+        audioDefaults: UserDefaults? = nil
     ) {
+        let settings = audioDefaults ?? (isPresentationPreview ? UserDefaults(suiteName: "dev.wristremote.presentation-preview")! : .standard)
+        self.audioDefaults = settings
+        self.selectedAudioOutputUID = settings.string(forKey: "WristRemote.liveAudioOutputUID") ?? ""
+        self.codexAudioOutputUID = settings.string(forKey: "WristRemote.codexAudioOutputUID") ?? ""
+        self.codexShortcutKey = settings.string(forKey: "WristRemote.codexShortcutKey") ?? ""
+        self.codexShortcutModifiers = settings.string(forKey: "WristRemote.codexShortcutModifiers") ?? ""
         let codexCoordinator = CodexTaskCoordinator(
             pinnedThreadID: preferences.codexPinnedThreadID
         )
-        let internetRelay = WristInternetRelayMacCredentialStore.loadOrCreate().map {
+        let internetRelay = (isPresentationPreview ? nil : WristInternetRelayMacCredentialStore.loadOrCreate()).map {
             InternetRelayClient(credentials: $0)
         }
-        let codexTaskStateRevision = preferences.nextCodexTaskStateRevision()
+        let codexTaskStateRevision = isPresentationPreview ? 1 : preferences.nextCodexTaskStateRevision()
         let codexAppServerClient = CodexAppServerClient(
             executableURL: CodexExecutableLocator.defaultExecutableURL
         )
         let codexConversationAuthority = CodexConversationAuthority(
-            workspaceIdentityStore: .persistentDefault()
+            workspaceIdentityStore: isPresentationPreview ? CodexWorkspaceIdentityStore() : .persistentDefault()
         )
-        let codexConversationLedger = CodexConversationIdempotencyLedger.persistentDefault()
-        let codexConversationFingerprintKey = CodexConversationFingerprintKeyStore.loadOrCreate()
+        let codexConversationLedger = isPresentationPreview ? CodexConversationIdempotencyLedger() : .persistentDefault()
+        let codexConversationFingerprintKey = isPresentationPreview ? nil : CodexConversationFingerprintKeyStore.loadOrCreate()
         self.preferences = preferences
         self.server = server
         self.actionEngine = actionEngine ?? WatchActionEngine()
@@ -123,7 +210,8 @@ final class BridgeAppModel: ObservableObject {
         self.internetRelay = internetRelay
         self.codexTaskStateRevision = codexTaskStateRevision
         codexPinnedThreadID = preferences.codexPinnedThreadID
-        codexHookReceiver = CodexHookReceiver(coordinator: codexCoordinator)
+        codexHookReceiver = CodexHookReceiver(coordinator: codexCoordinator,
+            bearerToken: isPresentationPreview ? nil : CodexHookTokenStore.loadOrCreate())
         speechLocaleIdentifier = self.speechTranscriber.recognitionLocaleIdentifier ?? "zh-CN"
         applicationProfiles = preferences.applicationProfiles
         tailnetAccessEnabled = preferences.tailnetAccessEnabled
@@ -264,12 +352,14 @@ final class BridgeAppModel: ObservableObject {
         )
         server.start(tailnetAccessEnabled: tailnetAccessEnabled)
         internetRelay?.start()
+        // The hook listener is independent of the Codex connection; starting it
+        // inside the task below meant 60928 never bound when that task stalled.
+        codexHookReceiver.start()
         let coordinator = codexCoordinator
         Task { @MainActor [weak self] in
             await coordinator.setSnapshotObserver { [weak self] snapshot in
                 Task { @MainActor in self?.publishCodexSnapshot(snapshot) }
             }
-            self?.codexHookReceiver.start()
             self?.refreshCodexConversationCatalog()
         }
     }
@@ -377,7 +467,30 @@ final class BridgeAppModel: ObservableObject {
         persistApplicationsAndInvalidateProfiles()
     }
 
+    let television = WristTelevisionAdapter()
+    private let controlCatalog = WristControlCatalog()
+    private func updateControlCatalog() {
+        var targets = [WristControlTarget(id: "mac", name: Host.current().localizedName ?? "Mac", kind: .mac,
+                                         detail: "电脑控制", actions: MacControlEngine.actions)]
+        if let target = television.target { targets.append(target) }
+        controlCatalog.update(targets)
+    }
+
+    private lazy var macControlEngine = MacControlEngine(actionEngine: actionEngine)
+
     private func configureComponents() {
+        liveAudioOutput.onFailure = { [weak self] detail in self?.finishVoiceWithFailure(detail) }
+        television.onChange = { [weak self] in self?.updateControlCatalog(); self?.objectWillChange.send() }
+        updateControlCatalog()
+        server.controlTargetsProvider = { [controlCatalog] in controlCatalog.snapshot }
+        server.onControlCommand = { [weak self] command, completion in
+            Task { @MainActor in
+                guard let self else { completion(.init(id: command.id, accepted: false, detail: "Mac 已停止")); return }
+                if command.targetID.hasPrefix("tv-") {
+                    completion(await self.television.perform(command))
+                } else { completion(self.macControlEngine.perform(command)) }
+            }
+        }
         actionEngine.updateApplicationProfiles(applicationProfiles)
         gestureDispatcher.onBinding = { [weak self] binding in
             guard let self else { return false }
@@ -487,7 +600,7 @@ final class BridgeAppModel: ObservableObject {
                 Task { @MainActor in
                     defer { self.voiceStartReservation.discard(ticket) }
                     switch intent {
-                    case .foregroundDictation:
+                    case .foregroundDictation, .recording, .wirelessMicrophone, .codexNativeDictation:
                         guard codexTaskIdentity == nil, codexConversationTarget == nil else {
                             completion(false)
                             return
@@ -537,6 +650,46 @@ final class BridgeAppModel: ObservableObject {
                             return
                         }
                         started = self.speechTranscriber.start(requiresAccessibility: true)
+                    case .codexNativeDictation:
+                        do {
+                            self.refreshAudioOutputs()
+                            let device = self.audioOutputDevices.first(where: { $0.id == self.codexAudioOutputUID })
+                            guard let binding = self.nativeShortcut,
+                                  let app = NSWorkspace.shared.frontmostApplication,
+                                  WristNativeDictationPolicy.permits(device: device, wirelessOutputUID: self.selectedAudioOutputUID,
+                                      shortcutConfigured: true, codexFrontmost: self.nativeCodexIsFrontmost())
+                            else { throw WristNativeDictationError.configuration }
+                            try self.liveAudioOutput.start(deviceUID: self.codexAudioOutputUID)
+                            guard self.actionEngine.perform(binding) else { self.liveAudioOutput.stop(); throw WristNativeDictationError.shortcut }
+                            self.nativeStartedBinding = binding
+                            self.nativeCodexPID = app.processIdentifier
+                            self.audioModeStatus = "已发出听写快捷键，请确认 Codex 正在听写"
+                            self.speechState = .listening
+                            started = true
+                        } catch {
+                            self.audioModeStatus = error.localizedDescription
+                            self.operationError = error.localizedDescription
+                            self.speechState = .failed(error.localizedDescription)
+                            started = false
+                        }
+                    case .recording, .wirelessMicrophone:
+                        do {
+                            guard let id = UUID(uuidString: sessionID) else { throw WristLiveAudioOutput.OutputError.unavailable }
+                            if intent == .recording {
+                                started = try self.recordingLibrary.start(id: id)
+                                self.audioModeStatus = "正在保存手表录音"
+                            } else {
+                                try self.liveAudioOutput.start(deviceUID: self.selectedAudioOutputUID)
+                                started = true
+                                self.audioModeStatus = "无线麦正在输出 · 前台模式"
+                            }
+                            self.speechState = .listening
+                        } catch {
+                            self.audioModeStatus = error.localizedDescription
+                            self.operationError = error.localizedDescription
+                            self.speechState = .failed(error.localizedDescription)
+                            started = false
+                        }
                     case .codexTask, .codexConversation:
                         guard self.codexAudioInbox.acceptsNewSession,
                               let streamID = UUID(uuidString: sessionID)
@@ -1168,7 +1321,7 @@ final class BridgeAppModel: ObservableObject {
                     speechState = .failed(detail)
                     started = false
                 }
-            case .codexConversation:
+            case .codexConversation, .recording, .wirelessMicrophone, .codexNativeDictation:
                 started = false
             }
             guard started else {
@@ -1420,6 +1573,20 @@ final class BridgeAppModel: ObservableObject {
         switch context.intent {
         case .foregroundDictation:
             return speechTranscriber.append(samples: samples)
+        case .codexNativeDictation:
+            guard nativeCodexIsFrontmost() else {
+                finishVoiceWithFailure("Codex 已不在前台，音频已停止；请检查 Codex 听写状态")
+                return false
+            }
+            let accepted = liveAudioOutput.append(samples)
+            if !accepted { finishVoiceWithFailure("音频中断或积压，请检查 Codex 听写状态") }
+            return accepted
+        case .recording, .wirelessMicrophone:
+            guard let id = UUID(uuidString: context.sessionID) else { return false }
+            let accepted = context.intent == .recording
+                ? recordingLibrary.append(samples, id: id) : liveAudioOutput.append(samples)
+            if !accepted { finishVoiceWithFailure("音频中断、积压或达到时长上限，已停止") }
+            return accepted
         case .codexTask, .codexConversation:
             guard let streamID = UUID(uuidString: context.sessionID) else {
                 finishVoiceWithFailure("Codex 原始录音会话无效，已停止。")
@@ -1438,6 +1605,34 @@ final class BridgeAppModel: ObservableObject {
         switch context.intent {
         case .foregroundDictation:
             speechTranscriber.stop()
+        case .codexNativeDictation:
+            speechState = .finalizing
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let drained = await self.liveAudioOutput.drain()
+                guard self.activeVoiceContext?.sessionID == context.sessionID else { return }
+                self.liveAudioOutput.stop()
+                let toggled = self.stopNativeShortcut()
+                let detail = drained && toggled ? "已发出停止指令，请在 Codex 检查文字" : "尾音或停止指令未确认，请检查 Codex 听写状态"
+                self.audioModeStatus = detail
+                self.server.sendVoiceOutcome(.init(sessionID: context.sessionID, intent: context.intent, threadID: nil,
+                    kind: drained && toggled ? .delivered : .failed, text: nil, detail: detail, localeIdentifier: self.speechLocaleIdentifier))
+                self.activeVoiceContext = nil; self.speechState = .idle
+            }
+        case .recording, .wirelessMicrophone:
+            do {
+                if context.intent == .recording, let id = UUID(uuidString: context.sessionID) {
+                    lastSavedRecording = try recordingLibrary.finish(id: id)
+                    audioModeStatus = "录音已保存到 Mac"
+                } else {
+                    liveAudioOutput.stop()
+                    audioModeStatus = "无线麦已停止"
+                }
+                let outcome = WatchVoiceOutcome(sessionID: context.sessionID, intent: context.intent,
+                    threadID: nil, kind: .delivered, text: nil, detail: audioModeStatus, localeIdentifier: speechLocaleIdentifier)
+                server.sendVoiceOutcome(outcome)
+                activeVoiceContext = nil; speechState = .idle
+            } catch { finishVoiceWithFailure(error.localizedDescription) }
         case .codexTask, .codexConversation:
             guard let streamID = UUID(uuidString: context.sessionID) else {
                 finishVoiceWithFailure("Codex 原始录音会话无效，已停止。")
@@ -1462,6 +1657,14 @@ final class BridgeAppModel: ObservableObject {
         codexVoiceSubmissionTask = nil
         guard let context = activeVoiceContext else { return }
         switch context.intent {
+        case .codexNativeDictation:
+            liveAudioOutput.stop()
+            _ = stopNativeShortcut()
+            audioModeStatus = "听写中断，请检查 Codex 听写状态"
+        case .recording, .wirelessMicrophone:
+            if let id = UUID(uuidString: context.sessionID) { recordingLibrary.cancel(id: id) }
+            liveAudioOutput.stop()
+            audioModeStatus = "录音已中断；未完成录音不保存"
         case .foregroundDictation:
             speechTranscriber.cancel()
         case .codexTask, .codexConversation:
@@ -1508,7 +1711,7 @@ final class BridgeAppModel: ObservableObject {
 
                 let outcome: WatchVoiceOutcome
                 switch context.intent {
-                case .foregroundDictation:
+                case .foregroundDictation, .recording, .wirelessMicrophone, .codexNativeDictation:
                     self.finishVoiceWithFailure("语音识别路径不匹配，已拒绝。")
                     return
 
@@ -1625,6 +1828,14 @@ final class BridgeAppModel: ObservableObject {
         codexVoiceSubmissionTask = nil
         guard let context = activeVoiceContext else { return }
         switch context.intent {
+        case .codexNativeDictation:
+            liveAudioOutput.stop()
+            _ = stopNativeShortcut()
+            audioModeStatus = "听写中断，请检查 Codex 听写状态"
+        case .recording, .wirelessMicrophone:
+            if let id = UUID(uuidString: context.sessionID) { recordingLibrary.cancel(id: id) }
+            liveAudioOutput.stop()
+            audioModeStatus = "录音已中断；未完成录音不保存"
         case .foregroundDictation:
             speechTranscriber.cancel()
         case .codexTask, .codexConversation:

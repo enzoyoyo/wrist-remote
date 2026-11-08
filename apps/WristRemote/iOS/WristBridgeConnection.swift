@@ -851,6 +851,38 @@ final class WristBridgeConnection: ObservableObject {
         isWatchActionProfileReady(revision: revision) && supportsPhoneButtonTriggers
     }
 
+    var onReadingControl: ((WristControlCommand) -> WristControlReceipt)?
+    func publishReadingSession(_ state: WristReadingSessionState?) {
+        guard isConnected else { return }
+        sendSecure(.init(type: "readingSession", readingSession: state, readingSessionCleared: state == nil))
+    }
+
+    private var controlCompletions: [UUID: (WristControlReceipt) -> Void] = [:]
+    private var controlTimeouts: [UUID: Task<Void, Never>] = [:]
+    private(set) var controlTargets: [WristControlTarget] = []
+    private var supportsControlCenter = false
+
+    func sendControl(_ command: WristControlCommand) async -> WristControlReceipt {
+        guard isConnected, supportsControlCenter, command.isValid(now: Self.currentEpochMilliseconds()),
+              controlCompletions.count < 4, controlCompletions[command.id] == nil else {
+            return .init(id: command.id, accepted: false, detail: "Mac 未就绪或操作过期")
+        }
+        return await withCheckedContinuation { continuation in
+            controlCompletions[command.id] = { continuation.resume(returning: $0) }
+            controlTimeouts[command.id] = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(4))
+                guard !Task.isCancelled else { return }
+                self?.completeControl(.init(id: command.id, accepted: false, detail: "Mac 未确认，不会自动重发"))
+            }
+            sendSecure(.init(type: "control", controlCommand: command))
+        }
+    }
+
+    private func completeControl(_ receipt: WristControlReceipt) {
+        controlTimeouts.removeValue(forKey: receipt.id)?.cancel()
+        controlCompletions.removeValue(forKey: receipt.id)?(receipt)
+    }
+
     func sendPhoneButtonTrigger(
         _ command: WristBridgeCommand,
         trigger: WatchActionTrigger,
@@ -1371,7 +1403,7 @@ final class WristBridgeConnection: ObservableObject {
         codexConversationTarget: WatchCodexConversationTarget? = nil
     ) -> Bool {
         switch intent {
-        case .foregroundDictation:
+        case .foregroundDictation, .recording, .wirelessMicrophone, .codexNativeDictation:
             return codexTaskIdentity == nil && codexConversationTarget == nil
         case .codexTask:
             return codexTaskIdentity != nil && codexConversationTarget == nil
@@ -1396,7 +1428,7 @@ final class WristBridgeConnection: ObservableObject {
             codexConversationTarget: codexConversationTarget
         ) else { return false }
         switch intent {
-        case .foregroundDictation:
+        case .foregroundDictation, .recording, .wirelessMicrophone, .codexNativeDictation:
             return true
         case .codexTask:
             return supportsCodexTasks
@@ -1428,7 +1460,7 @@ final class WristBridgeConnection: ObservableObject {
             || message.draftExpiresAtEpochMilliseconds != nil
             || message.codexConversationTarget != nil
         switch intent {
-        case .foregroundDictation:
+        case .foregroundDictation, .recording, .wirelessMicrophone, .codexNativeDictation:
             return !hasTaskFields && !hasRawDraftFields
         case .codexTask:
             return identity == expectedTaskIdentity && !hasRawDraftFields
@@ -2182,6 +2214,8 @@ final class WristBridgeConnection: ObservableObject {
             pendingServerIdentityFingerprint = nil
             pendingServerIdentityLocallyApproved = false
             state = .connected
+            supportsControlCenter = message.capabilities?.contains(WristBridgeWireMessage.controlCenterCapability) == true
+            controlTargets = message.controlTargets ?? []
             activeDirectRoute = attemptedDirectRoute
             reconnectAttempt = 0
             reconnectTask?.cancel()
@@ -2189,6 +2223,15 @@ final class WristBridgeConnection: ObservableObject {
 
         case "watchApplicationTitles":
             watchApplicationTitles = Self.normalizedTitles(message.watchApplicationTitles ?? [:])
+
+        case "readingControl":
+            if let command = message.controlCommand {
+                let receipt = onReadingControl?(command) ?? .init(id: command.id, accepted: false, detail: "请先打开阅读会话")
+                sendSecure(.init(type: "readingControlResult", controlReceipt: receipt))
+            }
+
+        case "controlResult":
+            if let receipt = message.controlReceipt { completeControl(receipt) }
 
         case "buttonTriggerResult":
             if let receipt = phoneButtonReceiptLedger.resolve(
@@ -2218,6 +2261,7 @@ final class WristBridgeConnection: ObservableObject {
             }
 
         case "livenessAck":
+            if let targets = message.controlTargets { controlTargets = targets }
             guard WristBridgeWireMessage.isValidProbeID(message.probeID),
                   let probeID = message.probeID
             else { return }
@@ -2970,6 +3014,11 @@ final class WristBridgeConnection: ObservableObject {
     }
 
     private func fail(_ detail: String) {
+        supportsControlCenter = false
+        controlTargets = []
+        for id in Array(controlCompletions.keys) {
+            completeControl(.init(id: id, accepted: false, detail: "连接中断，结果未确认；不会自动重发"))
+        }
         let failedRoute = attemptedDirectRoute
         resetConnection(sendVoiceCancel: false)
         browser?.cancel()
@@ -3080,6 +3129,9 @@ final class WristBridgeConnection: ObservableObject {
     }
 
     private func resetConnection(sendVoiceCancel: Bool) {
+        supportsControlCenter = false
+        controlTargets = []
+        for id in Array(controlCompletions.keys) { completeControl(.init(id: id, accepted: false, detail: "连接中断，结果未确认；不会重发")) }
         for receipt in phoneButtonReceiptLedger.disconnect() {
             completePhoneButtonReceipt(receipt)
         }

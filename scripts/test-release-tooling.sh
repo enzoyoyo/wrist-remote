@@ -541,6 +541,19 @@ for apps, bundle, team in [
     ([dict(app, Entitlements={"application-identifier": "TEAMFIX123.dev.fixture.app"})], "dev.fixture.app", "TEAMFIX123"),
 ]:
     assert not module.matches_identity(apps, bundle, team)
+import plistlib
+import subprocess
+from unittest.mock import patch
+payload = subprocess.CompletedProcess([], 0, stdout=plistlib.dumps([app]))
+with patch.object(module.subprocess, "run", side_effect=[subprocess.CalledProcessError(1, []), payload]) as run:
+    assert module.read_installed_apps("fixture-device", "dev.fixture.app") == [app]
+    calls = [call.args[0] for call in run.call_args_list]
+    assert "--network" not in calls[0]
+    assert "--network" in calls[1]
+    assert "fixture-device" in calls[1] and "dev.fixture.app" in calls[1]
+with patch.object(module.subprocess, "run", return_value=payload) as run:
+    assert module.read_installed_apps("fixture-device", "dev.fixture.app") == [app]
+    assert run.call_count == 1
 PY
 /bin/mkdir -p "$PROFILE_FIXTURE"
 /bin/cat > "$PROFILE_FIXTURE/existing.plist" <<'PLIST'
@@ -601,7 +614,7 @@ check "offline watch gate verifies explicit Codex conversation selection" \
 readonly SIM_FIXTURE="$TEMP_ROOT/simulator"
 /bin/mkdir -p "$SIM_FIXTURE/bin" "$SIM_FIXTURE/tmp"
 cat > "$SIM_FIXTURE/devices.json" <<'JSON'
-{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-2":[{"name":"iPhone Compatible","udid":"IOS-COMPAT","isAvailable":true}],"com.apple.CoreSimulator.SimRuntime.iOS-27-0":[{"name":"iPhone Future","udid":"IOS-FUTURE","isAvailable":true}],"com.apple.CoreSimulator.SimRuntime.watchOS-26-2":[{"name":"Apple Watch Compatible","udid":"WATCH-COMPAT","isAvailable":true}],"com.apple.CoreSimulator.SimRuntime.watchOS-27-0":[{"name":"Apple Watch Future","udid":"WATCH-FUTURE","isAvailable":true}]}}
+{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-2":[{"name":"iPhone Compatible","udid":"IOS-COMPAT","isAvailable":true},{"name":"iPad Compatible","udid":"IPAD-COMPAT","isAvailable":true}],"com.apple.CoreSimulator.SimRuntime.iOS-27-0":[{"name":"iPhone Future","udid":"IOS-FUTURE","isAvailable":true},{"name":"iPad Future","udid":"IPAD-FUTURE","isAvailable":true}],"com.apple.CoreSimulator.SimRuntime.watchOS-26-2":[{"name":"Apple Watch Compatible","udid":"WATCH-COMPAT","isAvailable":true}],"com.apple.CoreSimulator.SimRuntime.watchOS-27-0":[{"name":"Apple Watch Future","udid":"WATCH-FUTURE","isAvailable":true}]}}
 JSON
 cat > "$SIM_FIXTURE/bin/xcodegen" <<'MOCK'
 #!/bin/zsh
@@ -644,6 +657,8 @@ simulator_calls="$(<"$SIM_FIXTURE/calls.log")"
 check "simulator fixture completes" test "$simulator_status" -eq 0
 check "iOS runtime does not exceed the active SDK" contains "$simulator_calls" "IOS-COMPAT"
 check "watchOS runtime does not exceed the active SDK" contains "$simulator_calls" "WATCH-COMPAT"
+check "iPad reading UI uses an SDK-compatible device" contains "$simulator_calls" "IPAD-COMPAT"
+check "future iPad runtime is rejected" not_contains "$simulator_calls" "IPAD-FUTURE"
 check "future iOS runtime is rejected" not_contains "$simulator_calls" "IOS-FUTURE"
 check "future watchOS runtime is rejected" not_contains "$simulator_calls" "WATCH-FUTURE"
 
