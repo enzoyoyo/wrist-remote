@@ -35,9 +35,9 @@ curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
   "https://api.github.com/repos/${repository}/releases/assets/${asset_id}"
 
 if command -v sha256sum >/dev/null 2>&1; then
-  printf '%s  %s\n' "$expected_sha256" "$temporary_file" | sha256sum --check --strict
+  printf '%s  %s\n' "$expected_sha256" "$temporary_file" | sha256sum -c
 else
-  printf '%s  %s\n' "$expected_sha256" "$temporary_file" | shasum -a 256 --check
+  printf '%s  %s\n' "$expected_sha256" "$temporary_file" | shasum -a 256 -c
 fi
 
 mv -f -- "$temporary_file" "$output_file"
