@@ -45,7 +45,7 @@ jobs:
             "$CODEQL_JAVASCRIPT_BUNDLE_ASSET_ID" "$CODEQL_JAVASCRIPT_BUNDLE_SHA256" \
             "$RUNNER_TEMP/codeql-bundle-javascript-linux64.tar.zst"
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
         with:
           languages: javascript-typescript
           tools: ${{ runner.temp }}/codeql-bundle-javascript-linux64.tar.zst
@@ -82,7 +82,7 @@ jobs:
             "$CODEQL_SWIFT_BUNDLE_ASSET_ID" "$CODEQL_SWIFT_BUNDLE_SHA256" \
             "$RUNNER_TEMP/codeql-bundle-swift-osx64.tar.zst"
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
         with:
           languages: swift
           tools: ${{ runner.temp }}/codeql-bundle-swift-osx64.tar.zst
