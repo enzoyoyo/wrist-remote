@@ -27,6 +27,7 @@ runs:
         readonly archive="$RUNNER_TEMP/xcodegen.zip"
         readonly install_root="$RUNNER_TEMP/xcodegen-release"
         curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+          --retry 3 --retry-delay 2 --retry-max-time 120 \
           --output "$archive" \
           "https://github.com/yonaskolb/XcodeGen/releases/download/${version}/xcodegen.zip"
         printf '%s  %s\n' "$expected_sha256" "$archive" | shasum -a 256 --check
@@ -58,6 +59,7 @@ runs:
         readonly archive="$RUNNER_TEMP/ripgrep.tar.gz"
         readonly install_root="$RUNNER_TEMP/ripgrep-release"
         curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+          --retry 3 --retry-delay 2 --retry-max-time 120 \
           --output "$archive" \
           "https://github.com/BurntSushi/ripgrep/releases/download/${version}/ripgrep-${version}-${target}.tar.gz"
         printf '%s  %s\n' "$expected_sha256" "$archive" | shasum -a 256 --check
