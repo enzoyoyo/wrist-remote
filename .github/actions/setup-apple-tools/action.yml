@@ -20,9 +20,10 @@ runs:
 
     - name: Install XcodeGen 2.46.0
       shell: bash
+      env:
+        GITHUB_DOWNLOAD_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
-        readonly version=2.46.0
         readonly expected_sha256=4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
         readonly archive="$RUNNER_TEMP/xcodegen.zip"
         readonly install_root="$RUNNER_TEMP/xcodegen-release"
@@ -30,6 +31,7 @@ runs:
         # download route can return a gateway error while the API asset works.
         curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
           --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 120 \
+          --header "Authorization: Bearer $GITHUB_DOWNLOAD_TOKEN" \
           --header 'Accept: application/octet-stream' \
           --output "$archive" \
           "https://api.github.com/repos/yonaskolb/XcodeGen/releases/assets/478866069"
@@ -42,6 +44,8 @@ runs:
 
     - name: Install ripgrep 15.2.0
       shell: bash
+      env:
+        GITHUB_DOWNLOAD_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
         readonly version=15.2.0
@@ -65,6 +69,7 @@ runs:
         readonly install_root="$RUNNER_TEMP/ripgrep-release"
         curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
           --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 120 \
+          --header "Authorization: Bearer $GITHUB_DOWNLOAD_TOKEN" \
           --header 'Accept: application/octet-stream' \
           --output "$archive" \
           "https://api.github.com/repos/BurntSushi/ripgrep/releases/assets/${asset_id}"

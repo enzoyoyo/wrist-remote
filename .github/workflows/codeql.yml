@@ -20,6 +20,9 @@ concurrency:
 
 env:
   NODE_VERSION: 24.19.0
+  # Official CodeQL 2.27.4 bundle containing the Swift extractor and query packs.
+  CODEQL_SWIFT_BUNDLE_ASSET_ID: 692239631
+  CODEQL_SWIFT_BUNDLE_SHA256: 52e3f0ea756787f0ceb2e5b2553d2560ba1d83573e3f77002f31833b307fbebc
 
 jobs:
   javascript-typescript:
@@ -61,10 +64,24 @@ jobs:
         uses: ./.github/actions/setup-apple-tools
       - name: Create non-signing CI configuration
         run: cp Config/Local.xcconfig.example Config/Local.xcconfig
+      - name: Download checksum-pinned Swift analysis tools
+        env:
+          GITHUB_DOWNLOAD_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/codeql-bundle-swift-osx64.tar.zst"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+            --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 120 \
+            --header "Authorization: Bearer $GITHUB_DOWNLOAD_TOKEN" \
+            --header 'Accept: application/octet-stream' \
+            --output "$archive" \
+            "https://api.github.com/repos/github/codeql-action/releases/assets/${CODEQL_SWIFT_BUNDLE_ASSET_ID}"
+          printf '%s  %s\n' "$CODEQL_SWIFT_BUNDLE_SHA256" "$archive" | shasum -a 256 --check
       - name: Initialize CodeQL
         uses: github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4
         with:
           languages: swift
+          tools: ${{ runner.temp }}/codeql-bundle-swift-osx64.tar.zst
           build-mode: manual
           queries: security-extended
       - name: Trace unsigned Apple builds

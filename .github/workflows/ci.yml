@@ -33,12 +33,15 @@ jobs:
           persist-credentials: false
       - name: Install checksum-pinned Gitleaks
         shell: bash
+        env:
+          GITHUB_DOWNLOAD_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           archive="$RUNNER_TEMP/gitleaks.tar.gz"
           bin_dir="$RUNNER_TEMP/gitleaks-bin"
           curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
             --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 120 \
+            --header "Authorization: Bearer $GITHUB_DOWNLOAD_TOKEN" \
             --header 'Accept: application/octet-stream' \
             --output "$archive" \
             "https://api.github.com/repos/gitleaks/gitleaks/releases/assets/${GITLEAKS_LINUX_X64_ASSET_ID}"
